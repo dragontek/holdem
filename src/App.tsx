@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Navigation } from './components/Navigation';
-import type { ViewMode } from './components/Navigation';
-import { GamesView } from './components/GamesView';
-import { LeaderboardView } from './components/LeaderboardView';
+import type { ViewMode, PortalMode } from './components/Navigation';
+import { PlayerScheduleView } from './components/schedule/PlayerScheduleView';
+import { PlayerStandingsView } from './components/standings/PlayerStandingsView';
 import { PlayerStatsView } from './components/PlayerStatsView';
 import { DirectorDesk } from './components/DirectorDesk';
 import { AdminView } from './components/AdminView';
@@ -12,8 +12,7 @@ import { AppwriteSetupModal } from './components/AppwriteSetupModal';
 import { AuthModal } from './components/AuthModal';
 import { VenueManagerModal } from './components/VenueManagerModal';
 import { EventScheduleModal } from './components/EventScheduleModal';
-import { InfoView } from './components/InfoView';
-import { GalleryView } from './components/GalleryView';
+import { LeagueGuideView } from './components/guide/LeagueGuideView';
 import { AppwriteService } from './services/appwriteService';
 import { AuthService } from './services/authService';
 import type { 
@@ -31,6 +30,7 @@ import type {
 } from './types/holdem';
 
 export const App: React.FC = () => {
+  const [portalMode, setPortalMode] = useState<PortalMode>('public');
   const [currentView, setCurrentView] = useState<ViewMode>('games');
   const [viewHistory, setViewHistory] = useState<ViewMode[]>([]);
   
@@ -104,32 +104,51 @@ export const App: React.FC = () => {
     loadData();
   }, []);
 
+  // Normalize any view key or URL hash to canonical ViewMode
+  const normalizeView = (raw: string): ViewMode => {
+    const clean = raw.replace('#', '').toLowerCase();
+    if (clean === 'schedule' || clean === 'games') return 'games';
+    if (clean === 'standings' || clean === 'leaderboard') return 'leaderboard';
+    if (clean === 'rules' || clean === 'info' || clean === 'gallery' || clean === 'guide') return 'guide';
+    if (clean === 'desk' || clean === 'director') return 'director';
+    if (clean === 'ops' || clean === 'admin') return 'admin';
+    if (clean === 'tv') return 'tv';
+    if (clean === 'stats') return 'stats';
+    return 'games';
+  };
+
   // Sync with browser history and popstate
   useEffect(() => {
-    const rawHash = window.location.hash.replace('#', '') as ViewMode;
-    const validViews: ViewMode[] = ['games', 'leaderboard', 'stats', 'director', 'admin', 'tv', 'info', 'gallery'];
-    if (validViews.includes(rawHash)) {
-      setCurrentView(rawHash);
-      window.history.replaceState({ view: rawHash }, '', `#${rawHash}`);
+    const rawHash = window.location.hash;
+    const targetView = normalizeView(rawHash || 'games');
+    setCurrentView(targetView);
+    if (targetView === 'director' || targetView === 'admin' || targetView === 'tv') {
+      setPortalMode('ops');
     } else {
-      window.history.replaceState({ view: 'games' }, '', '#games');
+      setPortalMode('public');
     }
+    window.history.replaceState({ view: targetView }, '', `#${targetView}`);
 
     const handlePopState = (event: PopStateEvent) => {
       const state = event.state;
-      const hashView = window.location.hash.replace('#', '') as ViewMode;
-      const targetView: ViewMode =
-        state?.view || (validViews.includes(hashView) ? hashView : 'games');
+      const hash = window.location.hash;
+      const rawTarget = state?.view || hash || 'games';
+      const normalizedView = normalizeView(rawTarget);
 
-      if (targetView === 'stats' && state?.playerId) {
+      if (normalizedView === 'stats' && state?.playerId) {
         const found = players.find((p) => p.$id === state.playerId);
         if (found) setSelectedPlayer(found);
       }
-      if (targetView === 'director' && state?.gameId) {
+      if (normalizedView === 'director' && state?.gameId) {
         const found = games.find((g) => g.$id === state.gameId);
         if (found) setSelectedGame(found);
       }
-      setCurrentView(targetView);
+      if (normalizedView === 'director' || normalizedView === 'admin' || normalizedView === 'tv') {
+        setPortalMode('ops');
+      } else {
+        setPortalMode('public');
+      }
+      setCurrentView(normalizedView);
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -137,22 +156,45 @@ export const App: React.FC = () => {
   }, [players, games]);
 
   // Internal App Navigation Stack
-  const handleNavigate = (view: ViewMode) => {
-    if (view === currentView) return;
+  const handleNavigate = (view: ViewMode | string) => {
+    const normalizedView = normalizeView(view);
+    if (normalizedView === currentView) return;
 
     // RBAC route protection
-    if (view === 'admin' && !AuthService.canAccessAdmin(currentUser?.role)) {
+    if (normalizedView === 'admin' && !AuthService.canAccessAdmin(currentUser?.role)) {
       setIsAuthOpen(true);
       return;
     }
-    if (view === 'director' && !AuthService.canAccessDirector(currentUser?.role)) {
+    if (normalizedView === 'director' && !AuthService.canAccessDirector(currentUser?.role)) {
       setIsAuthOpen(true);
       return;
+    }
+
+    if (normalizedView === 'director' || normalizedView === 'admin' || normalizedView === 'tv') {
+      setPortalMode('ops');
+    } else {
+      setPortalMode('public');
     }
 
     setViewHistory((prev) => [...prev, currentView]);
-    setCurrentView(view);
-    window.history.pushState({ view }, '', `#${view}`);
+    setCurrentView(normalizedView);
+    window.history.pushState({ view: normalizedView }, '', `#${normalizedView}`);
+  };
+
+  const handleTogglePortalMode = () => {
+    if (portalMode === 'public') {
+      const isStaff = AuthService.canAccessDirector(currentUser?.role) || AuthService.canAccessAdmin(currentUser?.role);
+      if (!isStaff) {
+        setIsAuthOpen(true);
+        return;
+      }
+      setPortalMode('ops');
+      const targetView: ViewMode = AuthService.canAccessDirector(currentUser?.role) ? 'director' : 'admin';
+      handleNavigate(targetView);
+    } else {
+      setPortalMode('public');
+      handleNavigate('games');
+    }
   };
 
   const handleGoBack = () => {
@@ -277,8 +319,10 @@ export const App: React.FC = () => {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* Navigation Header */}
       <Navigation
+        portalMode={portalMode}
         currentView={currentView}
         onSelectView={handleNavigate}
+        onTogglePortalMode={handleTogglePortalMode}
         onOpenQR={() => setIsQROpen(true)}
         onOpenAppwriteSetup={() => setIsAppwriteOpen(true)}
         onOpenAuth={() => setIsAuthOpen(true)}
@@ -292,27 +336,21 @@ export const App: React.FC = () => {
       {/* Main View Container */}
       <main className="flex-1">
         {currentView === 'games' && (
-          <GamesView
+          <PlayerScheduleView
             games={leagueGames}
             venues={leagueVenues.length > 0 ? leagueVenues : venues}
             seasonName={activeSeasonName}
-            announcements={announcements}
             hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: "Quad 6's", currentPool: 140, isClaimed: false }}
-            onSelectGame={handleSelectGame}
-            isDirector={AuthService.canAccessDirector(currentUser?.role)}
-            onOpenScheduleModal={() => {
-              setGameToEdit(null);
-              setIsScheduleModalOpen(true);
-            }}
-            onOpenVenueModal={() => setIsVenueModalOpen(true)}
+            announcements={announcements}
             currentUser={currentUser}
+            onSelectGame={handleSelectGame}
             onToggleRSVP={handleToggleRSVP}
-            onNavigateInfo={() => handleNavigate('info')}
+            onNavigateGuide={(_tab) => handleNavigate('guide')}
           />
         )}
 
         {currentView === 'leaderboard' && (
-          <LeaderboardView
+          <PlayerStandingsView
             players={players}
             seasons={leagueSeasons.length > 0 ? leagueSeasons : seasons}
             venues={leagueVenues.length > 0 ? leagueVenues : venues}
@@ -372,15 +410,12 @@ export const App: React.FC = () => {
           />
         )}
 
-        {currentView === 'info' && (
-          <InfoView
+        {(currentView === 'guide' || currentView === 'info' || currentView === 'gallery') && (
+          <LeagueGuideView
             venues={leagueVenues.length > 0 ? leagueVenues : venues}
             seasonName={activeSeasonName}
+            initialTab={currentView === 'gallery' ? 'gallery' : 'rules'}
           />
-        )}
-
-        {currentView === 'gallery' && (
-          <GalleryView />
         )}
       </main>
 

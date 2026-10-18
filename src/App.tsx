@@ -309,6 +309,7 @@ export const App: React.FC = () => {
             seasons={seasons}
             currentUser={currentUser}
             onVenuesChange={setVenues}
+            onSeasonsChange={setSeasons}
             onRoleChange={(newRole: UserRole) => {
               AuthService.updateRole(newRole);
               setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));

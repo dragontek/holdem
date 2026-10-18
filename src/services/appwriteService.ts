@@ -356,6 +356,99 @@ export class AppwriteService {
   }
 
   // ==========================================
+  // --- SEASON CRUD METHODS ------------------
+  // ==========================================
+
+  static async createSeason(seasonData: Omit<Season, '$id'>): Promise<Season> {
+    const newId = ID.unique();
+    const payload = {
+      name: seasonData.name,
+      startDate: seasonData.startDate,
+      endDate: seasonData.endDate,
+      isActive: Boolean(seasonData.isActive),
+      league: mockLeague.$id,
+    };
+
+    if (isAppwriteConfigured) {
+      try {
+        const res = await tablesDb.createRow(DATABASE_ID, APPWRITE_TABLES.SEASONS, newId, payload);
+        return {
+          $id: res.$id || newId,
+          leagueId: mockLeague.$id,
+          name: seasonData.name,
+          startDate: seasonData.startDate,
+          endDate: seasonData.endDate,
+          isActive: Boolean(seasonData.isActive),
+        };
+      } catch (e) {
+        console.warn('Appwrite createSeason failed, returning local instance:', e);
+      }
+    }
+
+    return {
+      $id: newId,
+      leagueId: mockLeague.$id,
+      name: seasonData.name,
+      startDate: seasonData.startDate,
+      endDate: seasonData.endDate,
+      isActive: Boolean(seasonData.isActive),
+    };
+  }
+
+  static async updateSeason(seasonId: string, updates: Partial<Season>): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      const payload: Record<string, any> = {};
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.startDate !== undefined) payload.startDate = updates.startDate;
+      if (updates.endDate !== undefined) payload.endDate = updates.endDate;
+      if (updates.isActive !== undefined) payload.isActive = updates.isActive;
+
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.SEASONS, seasonId, payload);
+      return true;
+    } catch (e) {
+      console.error('Failed to update season in Appwrite:', e);
+      return false;
+    }
+  }
+
+  static async deleteSeason(seasonId: string): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.SEASONS, seasonId);
+      return true;
+    } catch (e) {
+      console.error('Failed to delete season from Appwrite:', e);
+      return false;
+    }
+  }
+
+  static async setActiveSeason(seasonId: string, allSeasons: Season[]): Promise<Season[]> {
+    const updated = allSeasons.map((s) => ({
+      ...s,
+      isActive: s.$id === seasonId,
+    }));
+
+    if (isAppwriteConfigured) {
+      try {
+        await Promise.all(
+          updated.map((s) =>
+            tablesDb
+              .updateRow(DATABASE_ID, APPWRITE_TABLES.SEASONS, s.$id, {
+                isActive: s.isActive,
+              })
+              .catch((err) => console.warn(`Failed to update season ${s.$id} active state:`, err))
+          )
+        );
+      } catch (e) {
+        console.warn('Failed to bulk-update active seasons in Appwrite:', e);
+      }
+    }
+
+    return updated;
+  }
+
+  // ==========================================
   // --- GAME / EVENT SCHEDULE CRUD METHODS ---
   // ==========================================
 

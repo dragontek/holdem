@@ -1,71 +1,222 @@
-import { account, isAppwriteConfigured } from '../lib/appwrite';
-import type { Models } from 'appwrite';
+import { account, isAppwriteConfigured, ID } from '../lib/appwrite';
+import type { UserProfile, UserRole } from '../types/holdem';
 
-export interface UserSession {
-  user: Models.User<Models.Preferences> | null;
-  isDirector: boolean;
-  error?: string;
-}
+const LOCAL_STORAGE_USER_KEY = 'holdem_auth_user';
+
+export const DEMO_USERS: Record<UserRole, UserProfile> = {
+  manager: {
+    $id: 'user_demo_manager',
+    name: 'Sarah Connor',
+    email: 'manager@holdempro.com',
+    role: 'manager',
+  },
+  dealer: {
+    $id: 'user_demo_dealer',
+    name: 'Johnny Chan (Dealer)',
+    email: 'dealer@holdempro.com',
+    role: 'dealer',
+  },
+  scribe: {
+    $id: 'user_demo_scribe',
+    name: 'Morgan Stanley (Scribe)',
+    email: 'scribe@holdempro.com',
+    role: 'scribe',
+  },
+  player: {
+    $id: 'user_demo_player',
+    name: 'Ced 2452 (Player)',
+    email: 'player@holdempro.com',
+    role: 'player',
+  },
+};
 
 export class AuthService {
   /**
-   * Get Current Authenticated Session
+   * Get Current Authenticated User & Role
    */
-  static async getCurrentUser(): Promise<UserSession> {
-    if (!isAppwriteConfigured) {
-      return { user: null, isDirector: true }; // Local demo mode default director
+  static async getCurrentUser(): Promise<UserProfile | null> {
+    if (isAppwriteConfigured) {
+      try {
+        const user = await account.get();
+        const role = (user.prefs?.role as UserRole) || this.detectRoleFromEmail(user.email);
+        const profile: UserProfile = {
+          $id: user.$id,
+          name: user.name || user.email.split('@')[0],
+          email: user.email,
+          role,
+        };
+        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+        return profile;
+      } catch {
+        // Appwrite session expired or not logged in
+      }
     }
-    try {
-      const user = await account.get();
-      const isDirector = user.labels?.includes('director') || user.email.includes('director') || true;
-      return { user, isDirector };
-    } catch {
-      return { user: null, isDirector: false };
+
+    // Fallback: Check local storage
+    const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as UserProfile;
+      } catch {}
     }
+
+    // Default to manager for initial demo experience
+    return DEMO_USERS.manager;
   }
 
   /**
-   * Director Email / Password Login
+   * Register with Email & Password in Appwrite
    */
-  static async loginDirector(email: string, pass: string): Promise<UserSession> {
-    if (!isAppwriteConfigured) {
-      return { user: null, isDirector: true };
+  static async register(name: string, email: string, pass: string, role: UserRole = 'player'): Promise<{ user: UserProfile | null; error?: string }> {
+    if (isAppwriteConfigured) {
+      try {
+        const newUserId = ID.unique();
+        await account.create(newUserId, email, pass, name);
+        await account.createEmailPasswordSession(email, pass);
+        await account.updatePrefs({ role });
+
+        const profile: UserProfile = {
+          $id: newUserId,
+          name,
+          email,
+          role,
+        };
+        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+        return { user: profile };
+      } catch (e: any) {
+        return { user: null, error: e.message || 'Registration failed' };
+      }
     }
-    try {
-      await account.createEmailPasswordSession(email, pass);
-      const user = await account.get();
-      return { user, isDirector: true };
-    } catch (error: any) {
-      return { user: null, isDirector: false, error: error.message || 'Login failed' };
-    }
+
+    // Offline / Demo fallback
+    const profile: UserProfile = {
+      $id: `user_${Date.now()}`,
+      name,
+      email,
+      role,
+    };
+    localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+    return { user: profile };
   }
 
   /**
-   * Anonymous Player Guest Login
+   * Login with Email & Password in Appwrite
    */
-  static async loginAnonymous(): Promise<UserSession> {
-    if (!isAppwriteConfigured) {
-      return { user: null, isDirector: false };
+  static async login(email: string, pass: string): Promise<{ user: UserProfile | null; error?: string }> {
+    if (isAppwriteConfigured) {
+      try {
+        // Try clearing any existing session first
+        try {
+          await account.deleteSession('current');
+        } catch {}
+
+        await account.createEmailPasswordSession(email, pass);
+        const user = await account.get();
+        const role = (user.prefs?.role as UserRole) || this.detectRoleFromEmail(email);
+
+        const profile: UserProfile = {
+          $id: user.$id,
+          name: user.name || email.split('@')[0],
+          email: user.email,
+          role,
+        };
+        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+        return { user: profile };
+      } catch (e: any) {
+        return { user: null, error: e.message || 'Invalid email or password' };
+      }
     }
-    try {
-      await account.createAnonymousSession();
-      const user = await account.get();
-      return { user, isDirector: false };
-    } catch (error: any) {
-      return { user: null, isDirector: false, error: error.message };
+
+    // Offline / Demo fallback
+    const role = this.detectRoleFromEmail(email);
+    const profile: UserProfile = {
+      $id: `user_demo_${Date.now()}`,
+      name: email.split('@')[0],
+      email,
+      role,
+    };
+    localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+    return { user: profile };
+  }
+
+  /**
+   * Switch to a specific Demo Role immediately for testing
+   */
+  static switchDemoRole(role: UserRole): UserProfile {
+    const profile = DEMO_USERS[role];
+    localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+    return profile;
+  }
+
+  /**
+   * Update User Role
+   */
+  static async updateRole(newRole: UserRole): Promise<boolean> {
+    if (isAppwriteConfigured) {
+      try {
+        await account.updatePrefs({ role: newRole });
+      } catch {}
     }
+    const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        parsed.role = newRole;
+        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(parsed));
+      } catch {}
+    }
+    return true;
   }
 
   /**
    * Logout
    */
   static async logout(): Promise<boolean> {
-    if (!isAppwriteConfigured) return true;
-    try {
-      await account.deleteSession('current');
-      return true;
-    } catch {
-      return false;
+    if (isAppwriteConfigured) {
+      try {
+        await account.deleteSession('current');
+      } catch {}
     }
+    localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
+    return true;
+  }
+
+  /**
+   * Auto-detect default role from email hints
+   */
+  private static detectRoleFromEmail(email: string): UserRole {
+    const lower = email.toLowerCase();
+    if (lower.includes('manager') || lower.includes('director') || lower.includes('admin')) return 'manager';
+    if (lower.includes('dealer')) return 'dealer';
+    if (lower.includes('scribe')) return 'scribe';
+    return 'player';
+  }
+
+  // ==========================================
+  // --- ROLE-BASED ACCESS CONTROL HELPERS ---
+  // ==========================================
+
+  static canAccessAdmin(role?: UserRole): boolean {
+    return role === 'manager';
+  }
+
+  static canAccessDirector(role?: UserRole): boolean {
+    return role === 'manager' || role === 'dealer' || role === 'scribe';
+  }
+
+  static canManageClock(role?: UserRole): boolean {
+    return role === 'manager' || role === 'dealer';
+  }
+
+  static canManageVenues(role?: UserRole): boolean {
+    return role === 'manager';
+  }
+
+  static canScheduleGames(role?: UserRole): boolean {
+    return role === 'manager';
+  }
+
+  static canRecordBusts(role?: UserRole): boolean {
+    return role === 'manager' || role === 'dealer' || role === 'scribe';
   }
 }

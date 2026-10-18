@@ -118,3 +118,13 @@ export interface Announcement {
   type: 'urgent' | 'info' | 'promo';
   createdAt: string;
 }
+
+export type UserRole = 'manager' | 'dealer' | 'scribe' | 'player';
+
+export interface UserProfile {
+  $id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+}
+

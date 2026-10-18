@@ -1,27 +1,34 @@
 import React from 'react';
+import type { UserProfile, UserRole } from '../types/holdem';
+import { AuthService } from '../services/authService';
 import { 
   Trophy, 
   Calendar, 
-  BarChart3, 
   Tv, 
   SlidersHorizontal, 
   QrCode, 
   Database,
   Building2,
   ShieldCheck,
-  KeyRound
+  KeyRound,
+  LogIn,
+  Crown,
+  Briefcase,
+  PenTool,
+  Gamepad2,
+  Settings
 } from 'lucide-react';
 import { isAppwriteConfigured } from '../lib/appwrite';
 
-export type ViewMode = 'games' | 'leaderboard' | 'stats' | 'director' | 'tv';
+export type ViewMode = 'games' | 'leaderboard' | 'stats' | 'director' | 'tv' | 'admin';
 
 interface NavigationProps {
   currentView: ViewMode;
   onSelectView: (view: ViewMode) => void;
   onOpenQR: () => void;
   onOpenAppwriteSetup: () => void;
-  onOpenDirectorAuth: () => void;
-  isDirector: boolean;
+  onOpenAuth: () => void;
+  currentUser: UserProfile | null;
   seasonName: string;
 }
 
@@ -30,10 +37,28 @@ export const Navigation: React.FC<NavigationProps> = ({
   onSelectView,
   onOpenQR,
   onOpenAppwriteSetup,
-  onOpenDirectorAuth,
-  isDirector,
+  onOpenAuth,
+  currentUser,
   seasonName,
 }) => {
+  const userRole = currentUser?.role || 'player';
+  const canAccessDirector = AuthService.canAccessDirector(userRole);
+  const canAccessAdmin = AuthService.canAccessAdmin(userRole);
+
+  const getRoleIcon = (role: UserRole) => {
+    switch (role) {
+      case 'manager':
+        return <Crown className="w-3.5 h-3.5 text-amber-400" />;
+      case 'dealer':
+        return <Briefcase className="w-3.5 h-3.5 text-emerald-400" />;
+      case 'scribe':
+        return <PenTool className="w-3.5 h-3.5 text-indigo-400" />;
+      case 'player':
+      default:
+        return <Gamepad2 className="w-3.5 h-3.5 text-slate-400" />;
+    }
+  };
+
   return (
     <>
       {/* Top Streamlined Header Navigation Bar */}
@@ -41,14 +66,17 @@ export const Navigation: React.FC<NavigationProps> = ({
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           
           {/* 1. Left: Brand & Season */}
-          <div className="flex items-center gap-3">
+          <div 
+            onClick={() => onSelectView('games')}
+            className="flex items-center gap-3 cursor-pointer select-none"
+          >
             <div className="w-9 h-9 rounded-xl felt-gradient flex items-center justify-center border border-emerald-500/50 shadow-md felt-glow shrink-0">
               <span className="text-lg font-black text-amber-400">♠</span>
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base font-bold tracking-tight text-white flex items-center gap-1">
-                  Hold'em Pro
+                  Hold&apos;em Pro
                 </h1>
                 <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
                   {seasonName}
@@ -57,11 +85,11 @@ export const Navigation: React.FC<NavigationProps> = ({
             </div>
           </div>
 
-          {/* 2. Center: Desktop Nav View Switcher */}
+          {/* 2. Center: Desktop Nav View Switcher (Player stats removed from main menu) */}
           <div className="hidden lg:flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
             <button
               onClick={() => onSelectView('games')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 currentView === 'games'
                   ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
@@ -72,7 +100,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             <button
               onClick={() => onSelectView('leaderboard')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 currentView === 'leaderboard'
                   ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
@@ -81,29 +109,33 @@ export const Navigation: React.FC<NavigationProps> = ({
               <Trophy className="w-3.5 h-3.5" /> Standings
             </button>
 
-            <button
-              onClick={() => onSelectView('stats')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                currentView === 'stats'
-                  ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5" /> Player Stats
-            </button>
+            {canAccessDirector && (
+              <button
+                onClick={() => onSelectView('director')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  currentView === 'director'
+                    ? 'bg-emerald-500 text-slate-950 shadow-md font-bold'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" /> Director Desk
+              </button>
+            )}
+
+            {canAccessAdmin && (
+              <button
+                onClick={() => onSelectView('admin')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  currentView === 'admin'
+                    ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
+                    : 'text-amber-400/90 hover:text-amber-300 hover:bg-slate-800/60'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" /> Admin
+              </button>
+            )}
 
             <div className="w-px h-4 bg-slate-800 mx-1" />
-
-            <button
-              onClick={() => onSelectView('director')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                currentView === 'director'
-                  ? 'bg-emerald-500 text-slate-950 shadow-md font-bold'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" /> Director Desk
-            </button>
 
             <button
               onClick={() => onSelectView('tv')}
@@ -117,7 +149,7 @@ export const Navigation: React.FC<NavigationProps> = ({
             </button>
           </div>
 
-          {/* 3. Right: Streamlined Action Controls */}
+          {/* 3. Right: User Profile & Quick Controls */}
           <div className="flex items-center gap-2">
             
             {/* Express QR Check-in */}
@@ -130,30 +162,35 @@ export const Navigation: React.FC<NavigationProps> = ({
               <span className="hidden sm:inline">QR Check-in</span>
             </button>
 
-            {/* Director Auth Status Button */}
+            {/* Auth / User Profile Button */}
             <button
-              onClick={onOpenDirectorAuth}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
-                isDirector
-                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm'
-                  : 'bg-slate-900 text-slate-300 border-slate-700 hover:text-white'
+              onClick={onOpenAuth}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                currentUser
+                  ? 'bg-slate-900/90 text-white border-slate-700 hover:border-amber-400 shadow-sm'
+                  : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md'
               }`}
-              title={isDirector ? 'Director Session Active' : 'Sign in as Tournament Director'}
+              title={currentUser ? `Logged in as ${currentUser.name} (${currentUser.role})` : 'Sign in to Hold\'em Pro'}
             >
-              {isDirector ? (
+              {currentUser ? (
                 <>
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span className="hidden sm:inline">Director Active</span>
+                  <div className="flex items-center gap-1">
+                    {getRoleIcon(currentUser.role)}
+                    <span className="max-w-[100px] truncate hidden sm:inline">{currentUser.name}</span>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] uppercase font-black bg-slate-800 text-amber-400 border border-slate-700">
+                    {currentUser.role}
+                  </span>
                 </>
               ) : (
                 <>
-                  <KeyRound className="w-4 h-4 text-amber-400" />
-                  <span className="hidden sm:inline">Director Login</span>
+                  <LogIn className="w-4 h-4" />
+                  <span>Sign In</span>
                 </>
               )}
             </button>
 
-            {/* Appwrite Connection Badge */}
+            {/* Appwrite Connection Indicator */}
             <button
               onClick={onOpenAppwriteSetup}
               className={`p-2 rounded-xl text-xs font-semibold border transition-all ${
@@ -161,7 +198,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                   : 'bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse'
               }`}
-              title={isAppwriteConfigured ? 'Appwrite Self-Hosted Live' : 'Configure Appwrite Backend'}
+              title={isAppwriteConfigured ? 'Appwrite v2.0 Live' : 'Configure Appwrite Backend'}
             >
               <Database className="w-4 h-4" />
             </button>
@@ -192,25 +229,29 @@ export const Navigation: React.FC<NavigationProps> = ({
           <span>Ranks</span>
         </button>
 
-        <button
-          onClick={() => onSelectView('stats')}
-          className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-xs transition-all ${
-            currentView === 'stats' ? 'text-amber-400 font-bold' : 'text-slate-400'
-          }`}
-        >
-          <BarChart3 className="w-5 h-5" />
-          <span>Stats</span>
-        </button>
+        {canAccessDirector && (
+          <button
+            onClick={() => onSelectView('director')}
+            className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-xs transition-all ${
+              currentView === 'director' ? 'text-emerald-400 font-bold' : 'text-slate-400'
+            }`}
+          >
+            <SlidersHorizontal className="w-5 h-5" />
+            <span>Director</span>
+          </button>
+        )}
 
-        <button
-          onClick={() => onSelectView('director')}
-          className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-xs transition-all ${
-            currentView === 'director' ? 'text-emerald-400 font-bold' : 'text-slate-400'
-          }`}
-        >
-          <SlidersHorizontal className="w-5 h-5" />
-          <span>Director</span>
-        </button>
+        {canAccessAdmin && (
+          <button
+            onClick={() => onSelectView('admin')}
+            className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-xs transition-all ${
+              currentView === 'admin' ? 'text-amber-400 font-bold' : 'text-slate-400'
+            }`}
+          >
+            <Settings className="w-5 h-5" />
+            <span>Admin</span>
+          </button>
+        )}
 
         <button
           onClick={() => onSelectView('tv')}

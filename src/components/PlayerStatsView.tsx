@@ -17,12 +17,14 @@ interface PlayerStatsViewProps {
   player: Player;
   allPlayers: Player[];
   onBack?: () => void;
+  backLabel?: string;
 }
 
 export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
   player,
   allPlayers,
   onBack,
+  backLabel = 'Back',
 }) => {
   const winRate = ((player.careerWins / (player.gamesPlayed || 1)) * 100).toFixed(1);
   const avgKOs = (player.careerKOs / (player.gamesPlayed || 1)).toFixed(1);
@@ -69,7 +71,7 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
           onClick={onBack}
           className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
         >
-          <ArrowLeft className="w-4 h-4" /> Back to Standings
+          <ArrowLeft className="w-4 h-4" /> {backLabel}
         </button>
       )}
 

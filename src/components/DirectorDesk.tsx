@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import type { Game, GameEntry, Player, Venue, Season } from '../types/holdem';
+import type { Game, GameEntry, Player, Venue, Season, UserRole } from '../types/holdem';
 import { AppwriteService } from '../services/appwriteService';
+import { AuthService } from '../services/authService';
 import { PlayerSeatingModal } from './PlayerSeatingModal';
 import { EventScheduleModal } from './EventScheduleModal';
-import { VenueManagerModal } from './VenueManagerModal';
 import { 
   Play, 
   Pause, 
@@ -21,9 +21,7 @@ import {
   Sparkles,
   Award,
   Calendar,
-  Building2,
   Edit3,
-  ExternalLink,
   Trophy
 } from 'lucide-react';
 
@@ -34,10 +32,10 @@ interface DirectorDeskProps {
   venues: Venue[];
   seasons: Season[];
   allGames: Game[];
+  userRole?: UserRole;
   onUpdateGame: (updatedGame: Game) => void;
   onEliminatePlayer: (entryId: string, koByPlayerId?: string) => void;
   onSelectGame: (game: Game) => void;
-  onVenuesChange: (venues: Venue[]) => void;
   onGamesChange: (games: Game[]) => void;
   onEntriesChange: (entries: GameEntry[]) => void;
 }
@@ -49,14 +47,14 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   venues,
   seasons,
   allGames,
+  userRole = 'manager',
   onUpdateGame,
   onEliminatePlayer,
   onSelectGame,
-  onVenuesChange,
   onGamesChange,
   onEntriesChange,
 }) => {
-  const [activeTab, setActiveTab] = useState<'live' | 'schedules' | 'venues'>('live');
+  const [activeTab, setActiveTab] = useState<'live' | 'schedules'>('live');
 
   // Clock state
   const [isRunning, setIsRunning] = useState<boolean>(activeGame.status === 'running');
@@ -70,12 +68,14 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   const [isSeatingModalOpen, setIsSeatingModalOpen] = useState<boolean>(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
   const [gameToEdit, setGameToEdit] = useState<Game | null>(null);
-  const [isVenueModalOpen, setIsVenueModalOpen] = useState<boolean>(false);
   const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
   const [finalSuccessMsg, setFinalSuccessMsg] = useState<string>('');
 
   const currentLevel = activeGame.blindSchedule[currentLevelIndex] || activeGame.blindSchedule[0];
   const nextLevel = activeGame.blindSchedule[currentLevelIndex + 1];
+
+  const canManageClock = AuthService.canManageClock(userRole);
+  const canScheduleGames = AuthService.canScheduleGames(userRole);
 
   // Sync clock if activeGame changes
   useEffect(() => {
@@ -138,6 +138,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleToggleTimer = () => {
+    if (!canManageClock) return;
     const nextRunning = !isRunning;
     setIsRunning(nextRunning);
     onUpdateGame({
@@ -151,6 +152,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleSkipLevel = () => {
+    if (!canManageClock) return;
     if (currentLevelIndex < activeGame.blindSchedule.length - 1) {
       const nextIdx = currentLevelIndex + 1;
       const nextSecs = activeGame.blindSchedule[nextIdx].durationMinutes * 60;
@@ -166,6 +168,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleAddMinute = () => {
+    if (!canManageClock) return;
     const nextSecs = secondsLeft + 60;
     setSecondsLeft(nextSecs);
     onUpdateGame({
@@ -177,6 +180,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleResetLevel = () => {
+    if (!canManageClock) return;
     const defaultSecs = currentLevel.durationMinutes * 60;
     setSecondsLeft(defaultSecs);
     onUpdateGame({
@@ -244,7 +248,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   const handleConfirmElimination = async () => {
     if (!selectedEntryToEliminate) return;
     const activeCount = gameEntries.filter((e) => !e.isEliminated).length;
-    const finishPos = activeCount; // finishes in current place
+    const finishPos = activeCount;
 
     onEliminatePlayer(selectedEntryToEliminate.$id, koWinnerPlayerId);
 
@@ -275,13 +279,12 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
     }
 
     setIsFinalizing(true);
-    const activeEntries = gameEntries.filter((e) => !e.isEliminated);
+    const activeRemain = gameEntries.filter((e) => !e.isEliminated);
     const eliminatedEntries = gameEntries.filter((e) => e.isEliminated).sort((a, b) => (a.finishPosition || 99) - (b.finishPosition || 99));
 
-    // Award winner to remaining active player
     const results: { entryId: string; playerId: string; finishPosition: number; points: number }[] = [];
 
-    activeEntries.forEach((entry, idx) => {
+    activeRemain.forEach((entry, idx) => {
       const pos = idx + 1;
       const pts = pos === 1 ? 50 : pos === 2 ? 35 : 25;
       results.push({
@@ -369,17 +372,6 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
           >
             <Calendar className="w-3.5 h-3.5" /> Event Schedules
           </button>
-
-          <button
-            onClick={() => setActiveTab('venues')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-              activeTab === 'venues'
-                ? 'bg-indigo-500 text-white shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Building2 className="w-3.5 h-3.5" /> Venues
-          </button>
         </div>
       </div>
 
@@ -452,39 +444,47 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
             {/* Timer Controls */}
             <div className="flex flex-wrap items-center justify-center gap-3">
-              <button
-                onClick={handleToggleTimer}
-                className={`px-6 py-3 rounded-xl font-black text-sm flex items-center gap-2 transition-all shadow-lg ${
-                  isRunning
-                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-                    : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
-                }`}
-              >
-                {isRunning ? <Pause className="w-5 h-5 fill-slate-950" /> : <Play className="w-5 h-5 fill-slate-950" />}
-                <span>{isRunning ? 'PAUSE CLOCK' : 'START CLOCK'}</span>
-              </button>
+              {canManageClock ? (
+                <>
+                  <button
+                    onClick={handleToggleTimer}
+                    className={`px-6 py-3 rounded-xl font-black text-sm flex items-center gap-2 transition-all shadow-lg ${
+                      isRunning
+                        ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                        : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+                    }`}
+                  >
+                    {isRunning ? <Pause className="w-5 h-5 fill-slate-950" /> : <Play className="w-5 h-5 fill-slate-950" />}
+                    <span>{isRunning ? 'PAUSE CLOCK' : 'START CLOCK'}</span>
+                  </button>
 
-              <button
-                onClick={handleAddMinute}
-                className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
-              >
-                <Plus className="w-4 h-4" /> +1 Min
-              </button>
+                  <button
+                    onClick={handleAddMinute}
+                    className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
+                  >
+                    <Plus className="w-4 h-4" /> +1 Min
+                  </button>
 
-              <button
-                onClick={handleSkipLevel}
-                className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
-              >
-                <SkipForward className="w-4 h-4" /> Skip Level
-              </button>
+                  <button
+                    onClick={handleSkipLevel}
+                    className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
+                  >
+                    <SkipForward className="w-4 h-4" /> Skip Level
+                  </button>
 
-              <button
-                onClick={handleResetLevel}
-                className="px-3.5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
-                title="Reset Level Timer"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </button>
+                  <button
+                    onClick={handleResetLevel}
+                    className="px-3.5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
+                    title="Reset Level Timer"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                  </button>
+                </>
+              ) : (
+                <div className="text-xs text-slate-400 font-semibold px-4 py-2 bg-slate-900 rounded-xl border border-slate-800">
+                  Clock controls restricted to Dealer &amp; Manager
+                </div>
+              )}
             </div>
           </div>
 
@@ -493,7 +493,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Users className="w-5 h-5 text-amber-400" /> Active Tables & Seating ({activeEntries.length} remaining of {gameEntries.length})
+                  <Users className="w-5 h-5 text-amber-400" /> Active Tables &amp; Seating ({activeEntries.length} remaining of {gameEntries.length})
                 </h2>
                 <p className="text-xs text-slate-400">Track chip re-buys, add-ons, and record knockout bounties in real time</p>
               </div>
@@ -505,13 +505,15 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                 >
                   <UserPlus className="w-4 h-4" /> Seat Player
                 </button>
-                <button
-                  onClick={handleFinalizeTournament}
-                  disabled={isFinalizing || activeGame.status === 'completed'}
-                  className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
-                >
-                  <Trophy className="w-4 h-4" /> {activeGame.status === 'completed' ? 'Tournament Finalized' : 'Finalize Event'}
-                </button>
+                {canScheduleGames && (
+                  <button
+                    onClick={handleFinalizeTournament}
+                    disabled={isFinalizing || activeGame.status === 'completed'}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                  >
+                    <Trophy className="w-4 h-4" /> {activeGame.status === 'completed' ? 'Tournament Finalized' : 'Finalize Event'}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -637,19 +639,21 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-xl font-black text-white">Event Schedules & Calendar</h2>
+              <h2 className="text-xl font-black text-white">Event Schedules &amp; Calendar</h2>
               <p className="text-xs text-slate-400">Manage poker tournaments across the league season</p>
             </div>
 
-            <button
-              onClick={() => {
-                setGameToEdit(null);
-                setIsScheduleModalOpen(true);
-              }}
-              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
-            >
-              <Plus className="w-4 h-4" /> Schedule Tournament
-            </button>
+            {canScheduleGames && (
+              <button
+                onClick={() => {
+                  setGameToEdit(null);
+                  setIsScheduleModalOpen(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
+              >
+                <Plus className="w-4 h-4" /> Schedule Tournament
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -694,15 +698,17 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setGameToEdit(game);
-                        setIsScheduleModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center gap-1 border border-slate-700"
-                    >
-                      <Edit3 className="w-3.5 h-3.5 text-amber-400" /> Edit
-                    </button>
+                    {canScheduleGames && (
+                      <button
+                        onClick={() => {
+                          setGameToEdit(game);
+                          setIsScheduleModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center gap-1 border border-slate-700"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-amber-400" /> Edit
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {
@@ -718,76 +724,6 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                       {game.$id === activeGame.$id ? 'Active Desk' : 'Open in Desk'}
                     </button>
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================== */}
-      {/* TAB 3: VENUES MANAGEMENT                                 */}
-      {/* ======================================================== */}
-      {activeTab === 'venues' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-black text-white">League Host Venues</h2>
-              <p className="text-xs text-slate-400">Manage partner host bars, cardrooms, and venues</p>
-            </div>
-
-            <button
-              onClick={() => setIsVenueModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
-            >
-              <Plus className="w-4 h-4" /> Add / Manage Venues
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {venues.map((venue) => (
-              <div
-                key={venue.$id}
-                className="glass-card rounded-2xl p-5 border border-slate-800 flex flex-col justify-between space-y-4"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="w-16 h-16 rounded-xl bg-slate-800 border border-slate-700 overflow-hidden shrink-0">
-                    {venue.imageUrl ? (
-                      <img src={venue.imageUrl} alt={venue.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-slate-500">
-                        <Building2 className="w-8 h-8" />
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <h3 className="text-lg font-bold text-white">{venue.name}</h3>
-                    <p className="text-xs text-slate-400 mt-1">{venue.address}</p>
-                    {venue.phone && <p className="text-xs text-slate-500 mt-0.5">{venue.phone}</p>}
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
-                  {venue.website ? (
-                    <a
-                      href={venue.website}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-amber-400 hover:underline flex items-center gap-1 font-semibold"
-                    >
-                      Visit Website <ExternalLink className="w-3 h-3" />
-                    </a>
-                  ) : (
-                    <span className="text-xs text-slate-500">No website</span>
-                  )}
-
-                  <button
-                    onClick={() => setIsVenueModalOpen(true)}
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1 border border-slate-700"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-amber-400" /> Edit Venue
-                  </button>
                 </div>
               </div>
             ))}
@@ -837,15 +773,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
         }}
       />
 
-      {/* 3. Venue Manager Modal */}
-      <VenueManagerModal
-        isOpen={isVenueModalOpen}
-        onClose={() => setIsVenueModalOpen(false)}
-        venues={venues}
-        onVenuesChange={onVenuesChange}
-      />
-
-      {/* 4. Elimination Modal */}
+      {/* 3. Elimination Modal */}
       {selectedEntryToEliminate && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="glass-panel rounded-2xl p-6 border border-slate-800 max-w-md w-full space-y-4">

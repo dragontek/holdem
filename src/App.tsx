@@ -5,10 +5,11 @@ import { GamesView } from './components/GamesView';
 import { LeaderboardView } from './components/LeaderboardView';
 import { PlayerStatsView } from './components/PlayerStatsView';
 import { DirectorDesk } from './components/DirectorDesk';
+import { AdminView } from './components/AdminView';
 import { VenueTVDisplay } from './components/VenueTVDisplay';
 import { QRCheckinModal } from './components/QRCheckinModal';
 import { AppwriteSetupModal } from './components/AppwriteSetupModal';
-import { DirectorAuthModal } from './components/DirectorAuthModal';
+import { AuthModal } from './components/AuthModal';
 import { VenueManagerModal } from './components/VenueManagerModal';
 import { EventScheduleModal } from './components/EventScheduleModal';
 import { AppwriteService } from './services/appwriteService';
@@ -20,11 +21,15 @@ import type {
   Season, 
   Announcement, 
   HotHandJackpot, 
-  GameEntry 
+  GameEntry,
+  UserProfile,
+  UserRole
 } from './types/holdem';
 
 export const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewMode>('games');
+  const [viewHistory, setViewHistory] = useState<ViewMode[]>([]);
+  
   const [games, setGames] = useState<Game[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -36,26 +41,28 @@ export const App: React.FC = () => {
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [gameEntries, setGameEntries] = useState<GameEntry[]>([]);
 
+  // Modals & Auth State
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [isQROpen, setIsQROpen] = useState<boolean>(false);
   const [isAppwriteOpen, setIsAppwriteOpen] = useState<boolean>(false);
-  const [isDirectorAuthOpen, setIsDirectorAuthOpen] = useState<boolean>(false);
   const [isVenueModalOpen, setIsVenueModalOpen] = useState<boolean>(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
   const [gameToEdit, setGameToEdit] = useState<Game | null>(null);
-  const [isDirector, setIsDirector] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Load initial data
+  // Load initial data & active session
   useEffect(() => {
     async function loadData() {
       try {
-        const [gList, vList, pList, sList, aList, hJackpot] = await Promise.all([
+        const [gList, vList, pList, sList, aList, hJackpot, user] = await Promise.all([
           AppwriteService.getGames(),
           AppwriteService.getVenues(),
           AppwriteService.getPlayers(),
           AppwriteService.getSeasons(),
           AppwriteService.getAnnouncements(),
           AppwriteService.getHotHandJackpot(),
+          AuthService.getCurrentUser(),
         ]);
 
         setGames(gList);
@@ -64,8 +71,9 @@ export const App: React.FC = () => {
         setSeasons(sList);
         setAnnouncements(aList);
         setHotHand(hJackpot);
+        setCurrentUser(user);
 
-        const activeG = gList.find(g => g.status === 'running') || gList[0];
+        const activeG = gList.find((g) => g.status === 'running') || gList[0];
         setSelectedGame(activeG);
 
         if (activeG) {
@@ -82,42 +90,72 @@ export const App: React.FC = () => {
     loadData();
   }, []);
 
+  // Internal App Navigation Stack
+  const handleNavigate = (view: ViewMode) => {
+    if (view === currentView) return;
+
+    // RBAC route protection
+    if (view === 'admin' && !AuthService.canAccessAdmin(currentUser?.role)) {
+      setIsAuthOpen(true);
+      return;
+    }
+    if (view === 'director' && !AuthService.canAccessDirector(currentUser?.role)) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    setViewHistory((prev) => [...prev, currentView]);
+    setCurrentView(view);
+  };
+
+  const handleGoBack = () => {
+    if (viewHistory.length > 0) {
+      const prev = viewHistory[viewHistory.length - 1];
+      setViewHistory((h) => h.slice(0, -1));
+      setCurrentView(prev);
+    } else {
+      setCurrentView('games');
+    }
+  };
+
   const handleSelectGame = async (game: Game) => {
     setSelectedGame(game);
     const entries = await AppwriteService.getGameEntries(game.$id);
     setGameEntries(entries);
-    setCurrentView('director');
+    handleNavigate('director');
   };
 
   const handleUpdateGame = (updatedGame: Game) => {
     setSelectedGame(updatedGame);
-    setGames(prev => prev.map(g => g.$id === updatedGame.$id ? updatedGame : g));
+    setGames((prev) => prev.map((g) => (g.$id === updatedGame.$id ? updatedGame : g)));
   };
 
   const handleSelectPlayer = (player: Player) => {
     setSelectedPlayer(player);
-    setCurrentView('stats');
+    handleNavigate('stats');
   };
 
   const handleEliminatePlayer = (entryId: string, koByPlayerId?: string) => {
-    setGameEntries(prev => prev.map(entry => {
-      if (entry.$id === entryId) {
-        const remainingCount = prev.filter(e => !e.isEliminated).length;
-        return {
-          ...entry,
-          isEliminated: true,
-          finishPosition: remainingCount,
-          eliminatedAt: new Date().toISOString(),
-        };
-      }
-      if (koByPlayerId && entry.playerId === koByPlayerId) {
-        return {
-          ...entry,
-          kosCount: entry.kosCount + 1,
-        };
-      }
-      return entry;
-    }));
+    setGameEntries((prev) =>
+      prev.map((entry) => {
+        if (entry.$id === entryId) {
+          const remainingCount = prev.filter((e) => !e.isEliminated).length;
+          return {
+            ...entry,
+            isEliminated: true,
+            finishPosition: remainingCount,
+            eliminatedAt: new Date().toISOString(),
+          };
+        }
+        if (koByPlayerId && entry.playerId === koByPlayerId) {
+          return {
+            ...entry,
+            kosCount: entry.kosCount + 1,
+          };
+        }
+        return entry;
+      })
+    );
   };
 
   if (loading) {
@@ -126,21 +164,23 @@ export const App: React.FC = () => {
         <div className="w-16 h-16 rounded-2xl felt-gradient border-2 border-emerald-500/40 flex items-center justify-center text-3xl font-black text-amber-400 animate-bounce felt-glow">
           ♠
         </div>
-        <div className="text-xl font-bold tracking-tight">Loading Hold'em League Pro...</div>
+        <div className="text-xl font-bold tracking-tight">Loading Hold&apos;em League Pro...</div>
         <div className="text-xs text-slate-400">Fetching live games, venues, and leaderboard standings</div>
       </div>
     );
   }
 
-  const activeSeasonName = seasons.find(s => s.isActive)?.name || '2026 Crawl 3';
+  const activeSeasonName = seasons.find((s) => s.isActive)?.name || '2026 Crawl 3';
   const activeGameToDisplay = selectedGame || games[0];
+  const previousView = viewHistory[viewHistory.length - 1];
+  const backLabel = previousView === 'director' ? 'Back to Director Desk' : previousView === 'games' ? 'Back to Games' : 'Back to Standings';
 
   // TV View Mode Renders Fullscreen Broadcast Component
   if (currentView === 'tv' && activeGameToDisplay && hotHand) {
     return (
       <div className="relative">
         <button
-          onClick={() => setCurrentView('games')}
+          onClick={handleGoBack}
           className="fixed top-4 right-4 z-50 px-4 py-2 rounded-xl bg-slate-900/90 text-amber-400 text-xs font-bold border border-amber-500/40 hover:bg-slate-800 transition-all shadow-xl"
         >
           Exit TV Mode
@@ -159,11 +199,11 @@ export const App: React.FC = () => {
       {/* Navigation Header */}
       <Navigation
         currentView={currentView}
-        onSelectView={setCurrentView}
+        onSelectView={handleNavigate}
         onOpenQR={() => setIsQROpen(true)}
         onOpenAppwriteSetup={() => setIsAppwriteOpen(true)}
-        onOpenDirectorAuth={() => setIsDirectorAuthOpen(true)}
-        isDirector={isDirector}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        currentUser={currentUser}
         seasonName={activeSeasonName}
       />
 
@@ -174,9 +214,9 @@ export const App: React.FC = () => {
             games={games}
             venues={venues}
             announcements={announcements}
-            hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: 'Quad 6\'s', currentPool: 140, isClaimed: false }}
+            hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: "Quad 6's", currentPool: 140, isClaimed: false }}
             onSelectGame={handleSelectGame}
-            isDirector={isDirector}
+            isDirector={AuthService.canAccessDirector(currentUser?.role)}
             onOpenScheduleModal={() => {
               setGameToEdit(null);
               setIsScheduleModalOpen(true);
@@ -198,7 +238,8 @@ export const App: React.FC = () => {
           <PlayerStatsView
             player={selectedPlayer || players[0]}
             allPlayers={players}
-            onBack={() => setCurrentView('leaderboard')}
+            onBack={handleGoBack}
+            backLabel={backLabel}
           />
         )}
 
@@ -210,12 +251,25 @@ export const App: React.FC = () => {
             venues={venues}
             seasons={seasons}
             allGames={games}
+            userRole={currentUser?.role || 'player'}
             onUpdateGame={handleUpdateGame}
             onEliminatePlayer={handleEliminatePlayer}
             onSelectGame={handleSelectGame}
-            onVenuesChange={setVenues}
             onGamesChange={setGames}
             onEntriesChange={setGameEntries}
+          />
+        )}
+
+        {currentView === 'admin' && (
+          <AdminView
+            venues={venues}
+            seasons={seasons}
+            currentUser={currentUser}
+            onVenuesChange={setVenues}
+            onRoleChange={(newRole: UserRole) => {
+              AuthService.updateRole(newRole);
+              setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));
+            }}
           />
         )}
       </main>
@@ -232,12 +286,12 @@ export const App: React.FC = () => {
         onClose={() => setIsAppwriteOpen(false)}
       />
 
-      {/* Director Auth Modal */}
-      <DirectorAuthModal
-        isOpen={isDirectorAuthOpen}
-        onClose={() => setIsDirectorAuthOpen(false)}
-        isDirector={isDirector}
-        onAuthChange={setIsDirector}
+      {/* Unified Authentication & Role Modal */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        currentUser={currentUser}
+        onUserChange={setCurrentUser}
       />
 
       {/* Venues Manager Modal */}

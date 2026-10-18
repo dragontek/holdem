@@ -3,11 +3,7 @@ import type { Game, Venue, Season } from '../types/holdem';
 import { AppwriteService } from '../services/appwriteService';
 import { 
   Calendar, 
-  Clock, 
-  MapPin, 
   DollarSign, 
-  Coins, 
-  User, 
   X, 
   Check, 
   AlertCircle

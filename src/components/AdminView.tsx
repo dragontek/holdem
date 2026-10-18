@@ -34,7 +34,8 @@ import {
   Clock,
   Layers,
   ChevronRight,
-  DollarSign
+  DollarSign,
+  RotateCcw
 } from 'lucide-react';
 
 export type AdminTab = 'flow' | 'seasons' | 'venues' | 'schedules' | 'users' | 'rbac';
@@ -79,9 +80,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
   // Feedback notifications
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Schedules filter state (filtered by season and venue)
+  // Schedules filter state (filtered by season, venue, and recurrence)
   const [selectedScheduleSeason, setSelectedScheduleSeason] = useState<string>('all');
   const [selectedScheduleVenue, setSelectedScheduleVenue] = useState<string>('all');
+  const [selectedRecurrenceFilter, setSelectedRecurrenceFilter] = useState<'all' | 'recurring' | 'single'>('all');
 
   // Users & Staff state
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -174,11 +176,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
   };
 
-  // Filter games based on selected season and venue
+  // Filter games based on selected season, venue, and recurrence
   const filteredGames = games.filter((g) => {
     const matchesSeason = selectedScheduleSeason === 'all' || g.seasonId === selectedScheduleSeason;
     const matchesVenue = selectedScheduleVenue === 'all' || g.venueId === selectedScheduleVenue;
-    return matchesSeason && matchesVenue;
+    const matchesRecurrence =
+      selectedRecurrenceFilter === 'all' ||
+      (selectedRecurrenceFilter === 'recurring' && g.isRecurring) ||
+      (selectedRecurrenceFilter === 'single' && !g.isRecurring);
+    return matchesSeason && matchesVenue && matchesRecurrence;
   });
 
   const filteredUsers = users.filter((u) => {
@@ -421,6 +427,21 @@ export const AdminView: React.FC<AdminViewProps> = ({
             ))}
           </select>
 
+          {/* Recurrence Filter */}
+          <select
+            value={selectedRecurrenceFilter}
+            onChange={(e) => setSelectedRecurrenceFilter(e.target.value as 'all' | 'recurring' | 'single')}
+            className="bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
+          >
+            <option value="all">All Event Types ({games.length})</option>
+            <option value="recurring">
+              🔄 Recurring Series ({games.filter((g) => g.isRecurring).length})
+            </option>
+            <option value="single">
+              Single Events ({games.filter((g) => !g.isRecurring).length})
+            </option>
+          </select>
+
           <button
             onClick={() => {
               setGameToEdit(null);
@@ -479,6 +500,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       ) : (
                         <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1">
                           <Clock className="w-3 h-3" /> SCHEDULED EVENT
+                        </span>
+                      )}
+                      
+                      {/* Recurrence Rule Badge */}
+                      {game.isRecurring && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1 shadow-sm">
+                          <RotateCcw className="w-2.5 h-2.5 text-indigo-400" />
+                          {game.recurrenceRule || 'Weekly Series'}
                         </span>
                       )}
 
@@ -1065,6 +1094,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
             onGamesChange([savedGame, ...games]);
             setSuccessMsg(`Scheduled new tournament event "${savedGame.title}".`);
           }
+          setTimeout(() => setSuccessMsg(''), 4000);
+        }}
+        onGamesSaved={(newGames) => {
+          onGamesChange([...newGames, ...games]);
+          setSuccessMsg(`Scheduled recurring weekly series: ${newGames.length} tournaments created.`);
           setTimeout(() => setSuccessMsg(''), 4000);
         }}
         onGameDeleted={(deletedId) => {

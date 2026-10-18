@@ -14,7 +14,8 @@ import {
   Sparkles,
   PlayCircle,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 
 interface GamesViewProps {
@@ -227,6 +228,13 @@ export const GamesView: React.FC<GamesViewProps> = ({
                     ) : (
                       <span className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5" /> UPCOMING TODAY
+                      </span>
+                    )}
+
+                    {game.isRecurring && (
+                      <span className="px-2.5 py-1 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+                        <RotateCcw className="w-3 h-3 text-purple-400" />
+                        {game.recurrenceRule || 'Weekly Series'}
                       </span>
                     )}
 

@@ -374,6 +374,12 @@ export const App: React.FC = () => {
             setSelectedGame(savedGame);
           }
         }}
+        onGamesSaved={(newGames) => {
+          setGames((prev) => [...newGames, ...prev]);
+          if (newGames.length > 0) {
+            setSelectedGame(newGames[0]);
+          }
+        }}
         onGameDeleted={(deletedId) => {
           setGames((prev) => prev.filter((g) => g.$id !== deletedId));
           if (selectedGame?.$id === deletedId && games.length > 1) {

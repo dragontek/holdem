@@ -114,6 +114,9 @@ export class AppwriteService {
         currentLevelIndex: doc.currentLevelIndex || 0,
         secondsRemainingInLevel: doc.secondsRemainingInLevel || 900,
         blindSchedule: mockGames[0].blindSchedule,
+        isRecurring: Boolean(doc.isRecurring),
+        recurrenceRule: doc.recurrenceRule,
+        seriesId: doc.seriesId,
       }));
     } catch {
       return mockGames;

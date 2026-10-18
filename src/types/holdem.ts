@@ -78,6 +78,9 @@ export interface Game {
   remainingPlayersCount: number;
   totalEntriesCount: number;
   blindSchedule: BlindLevel[];
+  isRecurring?: boolean;
+  recurrenceRule?: string;
+  seriesId?: string;
 }
 
 export interface GameEntry {

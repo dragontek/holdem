@@ -1,4 +1,4 @@
-import type { League, Season, Venue, Player, Game, GameEntry, Announcement, HotHandJackpot } from '../types/holdem';
+import type { League, Season, Venue, Player, Game, GameEntry, Announcement, HotHandJackpot, TournamentEvent } from '../types/holdem';
 
 export const mockLeague: League = {
   $id: 'league_1',
@@ -71,11 +71,16 @@ export const mockHotHandJackpot: HotHandJackpot = {
   isClaimed: false,
 };
 
+/**
+ * Native Appwrite Users (Each player has an account with roles & tournament statistics)
+ */
 export const mockPlayers: Player[] = [
   {
     $id: 'p_ced',
     leagueId: 'league_1',
     name: 'Ced 2452',
+    email: 'ced@holdempro.com',
+    role: 'player',
     nickname: 'The Heartbreaker',
     suitIcon: 'hearts',
     isMember: true,
@@ -89,6 +94,8 @@ export const mockPlayers: Player[] = [
     $id: 'p_angie',
     leagueId: 'league_1',
     name: 'Angie 1961',
+    email: 'angie@holdempro.com',
+    role: 'player',
     nickname: 'Queen of Spades',
     suitIcon: 'spades',
     isMember: true,
@@ -102,6 +109,8 @@ export const mockPlayers: Player[] = [
     $id: 'p_doubler',
     leagueId: 'league_1',
     name: 'Double R 3803',
+    email: 'doubler@holdempro.com',
+    role: 'player',
     nickname: 'Red River',
     suitIcon: 'diamonds',
     isMember: true,
@@ -115,6 +124,8 @@ export const mockPlayers: Player[] = [
     $id: 'p_katie',
     leagueId: 'league_1',
     name: 'Katie Kat 2781',
+    email: 'katie@holdempro.com',
+    role: 'player',
     nickname: 'Kat Attack',
     suitIcon: 'spades',
     isMember: true,
@@ -128,6 +139,8 @@ export const mockPlayers: Player[] = [
     $id: 'p_tezz',
     leagueId: 'league_1',
     name: 'Tezz 2787',
+    email: 'tezz@holdempro.com',
+    role: 'player',
     nickname: 'Club Master',
     suitIcon: 'clubs',
     isMember: true,
@@ -141,6 +154,8 @@ export const mockPlayers: Player[] = [
     $id: 'p_keith',
     leagueId: 'league_1',
     name: 'Keith Carter',
+    email: 'keith@holdempro.com',
+    role: 'player',
     suitIcon: 'hearts',
     isMember: false,
     totalPoints: 1419500,
@@ -153,6 +168,8 @@ export const mockPlayers: Player[] = [
     $id: 'p_kyle',
     leagueId: 'league_1',
     name: 'kyle 8180',
+    email: 'kyle@holdempro.com',
+    role: 'player',
     suitIcon: 'hearts',
     isMember: false,
     totalPoints: 1292300,
@@ -165,6 +182,8 @@ export const mockPlayers: Player[] = [
     $id: 'p_mikev',
     leagueId: 'league_1',
     name: 'Mike V',
+    email: 'mikev@holdempro.com',
+    role: 'player',
     suitIcon: 'clubs',
     isMember: false,
     totalPoints: 1185300,
@@ -177,6 +196,8 @@ export const mockPlayers: Player[] = [
     $id: 'p_michellev',
     leagueId: 'league_1',
     name: 'Michelle V 2195',
+    email: 'michelle@holdempro.com',
+    role: 'player',
     suitIcon: 'diamonds',
     isMember: true,
     totalPoints: 1124000,
@@ -185,7 +206,48 @@ export const mockPlayers: Player[] = [
     gamesPlayed: 72,
     highHandBadges: 0,
   },
+  {
+    $id: 'user_1',
+    leagueId: 'league_1',
+    name: 'Sarah Connor',
+    email: 'manager@holdempro.com',
+    role: 'manager',
+    suitIcon: 'spades',
+    isMember: true,
+    totalPoints: 0,
+    careerWins: 0,
+    careerKOs: 0,
+    gamesPlayed: 0,
+  },
+  {
+    $id: 'user_2',
+    leagueId: 'league_1',
+    name: 'Johnny Chan',
+    email: 'dealer@holdempro.com',
+    role: 'dealer',
+    suitIcon: 'clubs',
+    isMember: true,
+    totalPoints: 520000,
+    careerWins: 5,
+    careerKOs: 65,
+    gamesPlayed: 32,
+  },
+  {
+    $id: 'user_3',
+    leagueId: 'league_1',
+    name: 'Morgan Stanley',
+    email: 'scribe@holdempro.com',
+    role: 'scribe',
+    suitIcon: 'diamonds',
+    isMember: true,
+    totalPoints: 350000,
+    careerWins: 3,
+    careerKOs: 45,
+    gamesPlayed: 25,
+  },
 ];
+
+export const mockUsers = mockPlayers;
 
 export const defaultBlindSchedule = [
   { level: 1, smallBlind: 100, bigBlind: 200, ante: 0, durationMinutes: 15, isBreak: false },
@@ -200,13 +262,70 @@ export const defaultBlindSchedule = [
   { level: 10, smallBlind: 2000, bigBlind: 4000, ante: 4000, durationMinutes: 15, isBreak: false },
 ];
 
-export const mockGames: Game[] = [
+/**
+ * Tournament Events (Seasons have one or more Events hosted at Venues)
+ */
+export const mockEvents: TournamentEvent[] = [
   {
-    $id: 'game_today_single_barrel',
+    $id: 'event_sunday_showdown',
     seasonId: 'season_2026_crawl3',
     venueId: 'venue_single_barrel',
     venueName: 'Single Barrel',
     title: 'Sunday Afternoons Hold\'em Showdown',
+    description: 'Premier Sunday tournament session featuring full table rotations and high-stakes blind structures.',
+    scheduledAt: '2026-08-23T15:30:00Z',
+    status: 'running',
+    gamesCount: 1,
+  },
+  {
+    $id: 'event_sunday_freezeout',
+    seasonId: 'season_2026_crawl3',
+    venueId: 'venue_murray_street',
+    venueName: 'Murray Street Darts',
+    title: 'Sunday Evening Freezeout',
+    description: 'Classic freezeout format with dedicated tournament director management.',
+    scheduledAt: '2026-08-23T19:00:00Z',
+    status: 'scheduled',
+    gamesCount: 1,
+  },
+  {
+    $id: 'event_sat_triple_point',
+    seasonId: 'season_2026_crawl3',
+    venueId: 'venue_single_barrel',
+    venueName: 'Single Barrel',
+    title: 'Saturday Triple Point Special Night',
+    description: 'Special weekend triple championship point tournament evening with direct Millionaires seed.',
+    scheduledAt: '2026-08-22T14:30:00Z',
+    status: 'completed',
+    gamesCount: 1,
+  },
+  {
+    $id: 'event_sat_deepstack_series',
+    seasonId: 'season_2026_crawl3',
+    venueId: 'venue_single_barrel',
+    venueName: 'Single Barrel',
+    title: 'Saturday Morning Deepstack',
+    description: 'Weekly recurring deepstack championship series at Single Barrel.',
+    scheduledAt: 'Saturday, Aug 29, 2026 at 11:00 AM',
+    status: 'scheduled',
+    isRecurring: true,
+    recurrenceRule: 'Every Saturday at 11:00 AM',
+    seriesId: 'series_sat_morning',
+    gamesCount: 1,
+  },
+];
+
+/**
+ * Games (Events contain one or more Games)
+ */
+export const mockGames: Game[] = [
+  {
+    $id: 'game_today_single_barrel',
+    eventId: 'event_sunday_showdown',
+    seasonId: 'season_2026_crawl3',
+    venueId: 'venue_single_barrel',
+    venueName: 'Single Barrel',
+    title: 'Sunday Afternoons Hold\'em Showdown — Main Flight',
     scheduledAt: '2026-08-23T15:30:00Z',
     status: 'running',
     currentLevelIndex: 2, // Level 3 (200/400 Ante 400)
@@ -225,6 +344,7 @@ export const mockGames: Game[] = [
   },
   {
     $id: 'game_today_murray_street',
+    eventId: 'event_sunday_freezeout',
     seasonId: 'season_2026_crawl3',
     venueId: 'venue_murray_street',
     venueName: 'Murray Street Darts',
@@ -247,6 +367,7 @@ export const mockGames: Game[] = [
   },
   {
     $id: 'game_yesterday_single_barrel',
+    eventId: 'event_sat_triple_point',
     seasonId: 'season_2026_crawl3',
     venueId: 'venue_single_barrel',
     venueName: 'Single Barrel',
@@ -268,6 +389,7 @@ export const mockGames: Game[] = [
   },
   {
     $id: 'game_sat_morning_deepstack',
+    eventId: 'event_sat_deepstack_series',
     seasonId: 'season_2026_crawl3',
     venueId: 'venue_single_barrel',
     venueName: 'Single Barrel',

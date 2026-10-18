@@ -1,66 +1,19 @@
 import { account, isAppwriteConfigured, ID } from '../lib/appwrite';
 import type { UserProfile, UserRole } from '../types/holdem';
+import { mockUsers } from './mockData';
 
 const LOCAL_STORAGE_USER_KEY = 'holdem_auth_user';
 const LOCAL_STORAGE_ALL_USERS_KEY = 'holdem_all_users';
 
-export const INITIAL_LEAGUE_USERS: UserProfile[] = [
-  {
-    $id: 'user_1',
-    name: 'Sarah Connor',
-    email: 'manager@holdempro.com',
-    role: 'manager',
-  },
-  {
-    $id: 'user_2',
-    name: 'Johnny Chan',
-    email: 'dealer@holdempro.com',
-    role: 'dealer',
-  },
-  {
-    $id: 'user_3',
-    name: 'Morgan Stanley',
-    email: 'scribe@holdempro.com',
-    role: 'scribe',
-  },
-  {
-    $id: 'user_4',
-    name: 'Ced 2452',
-    email: 'player@holdempro.com',
-    role: 'player',
-  },
-  {
-    $id: 'user_5',
-    name: 'Doyle Brunson',
-    email: 'doyle@holdempro.com',
-    role: 'dealer',
-  },
-  {
-    $id: 'user_6',
-    name: 'Phil Hellmuth',
-    email: 'phil@holdempro.com',
-    role: 'player',
-  },
-  {
-    $id: 'user_7',
-    name: 'Daniel Negreanu',
-    email: 'daniel@holdempro.com',
-    role: 'manager',
-  },
-  {
-    $id: 'user_8',
-    name: 'Linda Johnson',
-    email: 'linda@holdempro.com',
-    role: 'scribe',
-  },
-];
+export const INITIAL_LEAGUE_USERS: UserProfile[] = mockUsers;
 
 export const DEMO_USERS: Record<UserRole, UserProfile> = {
-  manager: INITIAL_LEAGUE_USERS[0],
-  dealer: INITIAL_LEAGUE_USERS[1],
-  scribe: INITIAL_LEAGUE_USERS[2],
-  player: INITIAL_LEAGUE_USERS[3],
+  manager: INITIAL_LEAGUE_USERS.find((u) => u.role === 'manager') || INITIAL_LEAGUE_USERS[9],
+  dealer: INITIAL_LEAGUE_USERS.find((u) => u.role === 'dealer') || INITIAL_LEAGUE_USERS[10],
+  scribe: INITIAL_LEAGUE_USERS.find((u) => u.role === 'scribe') || INITIAL_LEAGUE_USERS[11],
+  player: INITIAL_LEAGUE_USERS.find((u) => u.role === 'player') || INITIAL_LEAGUE_USERS[0],
 };
+
 
 export class AuthService {
   /**
@@ -76,9 +29,17 @@ export class AuthService {
           name: user.name || user.email.split('@')[0],
           email: user.email,
           role,
+          suitIcon: (user.prefs?.suitIcon as any) || 'spades',
+          isMember: true,
+          totalPoints: Number(user.prefs?.totalPoints || 0),
+          careerWins: Number(user.prefs?.careerWins || 0),
+          careerKOs: Number(user.prefs?.careerKOs || 0),
+          gamesPlayed: Number(user.prefs?.gamesPlayed || 0),
+          leagueId: 'league_1',
         };
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
         return profile;
+
       } catch {
         // Appwrite session expired or not logged in
       }
@@ -112,6 +73,13 @@ export class AuthService {
           name,
           email,
           role,
+          suitIcon: 'spades',
+          isMember: true,
+          totalPoints: 0,
+          careerWins: 0,
+          careerKOs: 0,
+          gamesPlayed: 0,
+          leagueId: 'league_1',
         };
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
 
@@ -135,6 +103,13 @@ export class AuthService {
       name,
       email,
       role,
+      suitIcon: 'spades',
+      isMember: true,
+      totalPoints: 0,
+      careerWins: 0,
+      careerKOs: 0,
+      gamesPlayed: 0,
+      leagueId: 'league_1',
     };
     localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
 
@@ -168,6 +143,13 @@ export class AuthService {
           name: user.name || email.split('@')[0],
           email: user.email,
           role,
+          suitIcon: 'spades',
+          isMember: true,
+          totalPoints: 0,
+          careerWins: 0,
+          careerKOs: 0,
+          gamesPlayed: 0,
+          leagueId: 'league_1',
         };
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
         return { user: profile };
@@ -176,13 +158,27 @@ export class AuthService {
       }
     }
 
-    // Offline / Demo fallback
+    // Offline / Demo fallback: Check if user exists in directory
+    const allUsers = await this.getAllUsers();
+    const existing = allUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    if (existing) {
+      localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(existing));
+      return { user: existing };
+    }
+
     const role = this.detectRoleFromEmail(email);
     const profile: UserProfile = {
       $id: `user_demo_${Date.now()}`,
       name: email.split('@')[0],
       email,
       role,
+      suitIcon: 'spades',
+      isMember: true,
+      totalPoints: 0,
+      careerWins: 0,
+      careerKOs: 0,
+      gamesPlayed: 0,
+      leagueId: 'league_1',
     };
     localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
     return { user: profile };
@@ -248,11 +244,19 @@ export class AuthService {
       name,
       email,
       role,
+      suitIcon: 'spades',
+      isMember: true,
+      totalPoints: 0,
+      careerWins: 0,
+      careerKOs: 0,
+      gamesPlayed: 0,
+      leagueId: 'league_1',
     };
     const updated = [newUser, ...users];
     localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
     return newUser;
   }
+
 
   /**
    * Delete a user from the directory

@@ -4,12 +4,13 @@ import {
   mockSeasons, 
   mockVenues, 
   mockPlayers, 
+  mockEvents,
   mockGames, 
   mockGameEntries, 
   mockAnnouncements, 
   mockHotHandJackpot 
 } from './mockData';
-import type { League, Season, Venue, Player, Game, GameEntry, Announcement, HotHandJackpot } from '../types/holdem';
+import type { League, Season, Venue, Player, Game, GameEntry, Announcement, HotHandJackpot, TournamentEvent } from '../types/holdem';
 
 export class AppwriteService {
   // Fetch League Details
@@ -62,26 +63,148 @@ export class AppwriteService {
     }
   }
 
-  // Fetch Players & Standings
-  static async getPlayers(): Promise<Player[]> {
-    if (!isAppwriteConfigured) return mockPlayers;
-    try {
-      const response = await tablesDb.listRows(DATABASE_ID, APPWRITE_TABLES.PLAYERS);
-      const items = (response as any).rows || (response as any).documents || [];
-      return items.length > 0 ? (items as unknown as Player[]) : mockPlayers;
-    } catch {
-      try {
-        const response = await databases.listDocuments(DATABASE_ID, APPWRITE_COLLECTIONS.PLAYERS);
-        return response.documents.length > 0 ? (response.documents as unknown as Player[]) : mockPlayers;
-      } catch {
-        return mockPlayers;
+  // Fetch Events within Seasons
+  static async getEvents(seasonId?: string): Promise<TournamentEvent[]> {
+    if (!isAppwriteConfigured) {
+      if (seasonId && seasonId !== 'all') {
+        return mockEvents.filter((e) => e.seasonId === seasonId);
       }
+      return mockEvents;
+    }
+    try {
+      let items: any[] = [];
+      try {
+        const response = await tablesDb.listRows(DATABASE_ID, APPWRITE_TABLES.EVENTS);
+        items = (response as any).rows || (response as any).documents || [];
+      } catch {
+        const response = await databases.listDocuments(DATABASE_ID, APPWRITE_COLLECTIONS.EVENTS);
+        items = response.documents || [];
+      }
+
+      if (items.length === 0) {
+        return seasonId && seasonId !== 'all' ? mockEvents.filter((e) => e.seasonId === seasonId) : mockEvents;
+      }
+
+      const mapped: TournamentEvent[] = items.map((doc: any) => ({
+        $id: doc.$id,
+        seasonId: typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || 'season_2026_crawl3',
+        venueId: typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || 'venue_single_barrel',
+        venueName: typeof doc.venue === 'object' && doc.venue?.name ? doc.venue.name : doc.venueName || 'Single Barrel',
+        title: doc.title,
+        description: doc.description || '',
+        scheduledAt: doc.scheduledAt,
+        status: doc.status || 'scheduled',
+        isRecurring: Boolean(doc.isRecurring),
+        recurrenceRule: doc.recurrenceRule,
+        seriesId: doc.seriesId,
+        gamesCount: doc.gamesCount || 1,
+      }));
+
+      if (seasonId && seasonId !== 'all') {
+        return mapped.filter((e) => e.seasonId === seasonId);
+      }
+      return mapped;
+    } catch {
+      return seasonId && seasonId !== 'all' ? mockEvents.filter((e) => e.seasonId === seasonId) : mockEvents;
     }
   }
 
-  // Fetch Games with relational venue & season fallback parsing
-  static async getGames(): Promise<Game[]> {
-    if (!isAppwriteConfigured) return mockGames;
+  // Create Event
+  static async createEvent(eventData: Omit<TournamentEvent, '$id'>): Promise<TournamentEvent> {
+    const newId = ID.unique();
+    const payload = {
+      title: eventData.title,
+      description: eventData.description || '',
+      scheduledAt: eventData.scheduledAt,
+      status: eventData.status || 'scheduled',
+      isRecurring: Boolean(eventData.isRecurring),
+      recurrenceRule: eventData.recurrenceRule || '',
+      seriesId: eventData.seriesId || '',
+      season: eventData.seasonId,
+      venue: eventData.venueId,
+    };
+
+    if (isAppwriteConfigured) {
+      try {
+        const res = await tablesDb.createRow(DATABASE_ID, APPWRITE_TABLES.EVENTS, newId, payload);
+        return {
+          ...eventData,
+          $id: res.$id || newId,
+        };
+      } catch (e) {
+        console.warn('Appwrite createEvent failed, using local instance:', e);
+      }
+    }
+
+    return {
+      $id: newId,
+      ...eventData,
+    };
+  }
+
+  // Update Event
+  static async updateEvent(eventId: string, updates: Partial<TournamentEvent>): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      const payload: Record<string, any> = {};
+      if (updates.title !== undefined) payload.title = updates.title;
+      if (updates.description !== undefined) payload.description = updates.description;
+      if (updates.scheduledAt !== undefined) payload.scheduledAt = updates.scheduledAt;
+      if (updates.status !== undefined) payload.status = updates.status;
+      if (updates.isRecurring !== undefined) payload.isRecurring = updates.isRecurring;
+      if (updates.recurrenceRule !== undefined) payload.recurrenceRule = updates.recurrenceRule;
+      if (updates.seasonId !== undefined) payload.season = updates.seasonId;
+      if (updates.venueId !== undefined) payload.venue = updates.venueId;
+
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.EVENTS, eventId, payload);
+      return true;
+    } catch (e) {
+      console.error('Failed to update event in Appwrite:', e);
+      return false;
+    }
+  }
+
+  // Delete Event
+  static async deleteEvent(eventId: string): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.EVENTS, eventId);
+      return true;
+    } catch (e) {
+      console.error('Failed to delete event in Appwrite:', e);
+      return false;
+    }
+  }
+
+  // Fetch Players & Standings (Native Appwrite Users)
+  static async getPlayers(): Promise<Player[]> {
+    if (!isAppwriteConfigured) return mockPlayers;
+    try {
+      let items: any[] = [];
+      try {
+        const response = await tablesDb.listRows(DATABASE_ID, APPWRITE_TABLES.USERS);
+        items = (response as any).rows || (response as any).documents || [];
+      } catch {
+        try {
+          const response = await databases.listDocuments(DATABASE_ID, APPWRITE_COLLECTIONS.USERS);
+          items = response.documents || [];
+        } catch {
+          const response = await tablesDb.listRows(DATABASE_ID, APPWRITE_TABLES.PLAYERS);
+          items = (response as any).rows || (response as any).documents || [];
+        }
+      }
+      return items.length > 0 ? (items as unknown as Player[]) : mockPlayers;
+    } catch {
+      return mockPlayers;
+    }
+  }
+
+  // Fetch Games with relational event, venue & season fallback parsing
+  static async getGames(eventId?: string): Promise<Game[]> {
+    if (!isAppwriteConfigured) {
+      if (eventId) return mockGames.filter((g) => g.eventId === eventId);
+      return mockGames;
+    }
     try {
       let items: any[] = [];
       try {
@@ -92,10 +215,14 @@ export class AppwriteService {
         items = response.documents || [];
       }
 
-      if (items.length === 0) return mockGames;
+      if (items.length === 0) {
+        if (eventId) return mockGames.filter((g) => g.eventId === eventId);
+        return mockGames;
+      }
 
-      return items.map((doc: any) => ({
+      const mapped: Game[] = items.map((doc: any) => ({
         $id: doc.$id,
+        eventId: typeof doc.event === 'object' && doc.event ? doc.event.$id : doc.event || doc.eventId || 'event_sunday_showdown',
         seasonId: typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || 'season_2026_crawl3',
         venueId: typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || 'venue_single_barrel',
         venueName: (typeof doc.venue === 'object' && doc.venue?.name) ? doc.venue.name : doc.venueName || 'Single Barrel',
@@ -118,10 +245,15 @@ export class AppwriteService {
         recurrenceRule: doc.recurrenceRule,
         seriesId: doc.seriesId,
       }));
+
+      if (eventId) return mapped.filter((g) => g.eventId === eventId);
+      return mapped;
     } catch {
+      if (eventId) return mockGames.filter((g) => g.eventId === eventId);
       return mockGames;
     }
   }
+
 
   // Fetch Game Entries for a Game
   static async getGameEntries(gameId: string): Promise<GameEntry[]> {
@@ -474,6 +606,7 @@ export class AppwriteService {
       secondsRemainingInLevel: gameData.secondsRemainingInLevel || 900,
       season: gameData.seasonId || 'season_2026_crawl3',
       venue: gameData.venueId,
+      event: gameData.eventId,
     };
 
     if (isAppwriteConfigured) {
@@ -482,6 +615,7 @@ export class AppwriteService {
         return {
           ...gameData,
           $id: res.$id || newId,
+          eventId: gameData.eventId,
           seasonId: payload.season,
           venueId: payload.venue,
           blindSchedule: mockGames[0].blindSchedule,
@@ -518,6 +652,8 @@ export class AppwriteService {
       if (updates.secondsRemainingInLevel !== undefined) payload.secondsRemainingInLevel = updates.secondsRemainingInLevel;
       if (updates.venueId !== undefined) payload.venue = updates.venueId;
       if (updates.seasonId !== undefined) payload.season = updates.seasonId;
+      if (updates.eventId !== undefined) payload.event = updates.eventId;
+
 
       await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId, payload);
       return true;

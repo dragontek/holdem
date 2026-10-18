@@ -24,7 +24,9 @@ export const APPWRITE_TABLES = {
   LEAGUES: 'leagues',
   SEASONS: 'seasons',
   VENUES: 'venues',
-  PLAYERS: 'players',
+  USERS: 'users',
+  PLAYERS: 'users', // Player table moved to native appwrite Users
+  EVENTS: 'events',
   GAMES: 'games',
   GAME_ENTRIES: 'game_entries',
   HOT_HANDS: 'hot_hands',
@@ -33,3 +35,4 @@ export const APPWRITE_TABLES = {
 
 // Aliased for backwards compatibility
 export const APPWRITE_COLLECTIONS = APPWRITE_TABLES;
+

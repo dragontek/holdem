@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { Game, Venue, UserProfile, UserRole, Season } from '@/types/holdem';
+import type { Game, Venue, UserProfile, UserRole, Season, TournamentEvent } from '@/types/holdem';
 import { AppwriteService } from '@/services/appwriteService';
 import { AuthService } from '@/services/authService';
 import { EventScheduleModal } from './EventScheduleModal';
@@ -35,10 +35,12 @@ interface AdminViewProps {
   games: Game[];
   venues: Venue[];
   seasons: Season[];
+  events?: TournamentEvent[];
   currentUser: UserProfile | null;
   onGamesChange: (games: Game[]) => void;
   onVenuesChange: (venues: Venue[]) => void;
   onSeasonsChange: (seasons: Season[]) => void;
+  onEventsChange?: (events: TournamentEvent[]) => void;
   onRoleChange: (role: UserRole) => void;
   onSelectGame?: (game: Game) => void;
   onBack?: () => void;
@@ -49,15 +51,18 @@ export const AdminView: React.FC<AdminViewProps> = ({
   games,
   venues,
   seasons,
+  events = [],
   currentUser,
   onGamesChange,
   onVenuesChange,
   onSeasonsChange,
+  onEventsChange: _onEventsChange,
   onRoleChange,
   onSelectGame,
   onBack,
   backLabel = 'Back to Games',
 }) => {
+
   // Default to the full top-to-bottom setup workflow (Seasons -> Venues -> Schedules)
   const [activeTab, setActiveTab] = useState<AdminTab>('flow');
 
@@ -438,6 +443,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             <AdminSchedulesSection
               games={games}
               filteredGames={filteredGames}
+              events={events}
               venues={venues}
               seasons={seasons}
               selectedScheduleSeason={selectedScheduleSeason}
@@ -478,6 +484,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         <AdminSchedulesSection
           games={games}
           filteredGames={filteredGames}
+          events={events}
           venues={venues}
           seasons={seasons}
           selectedScheduleSeason={selectedScheduleSeason}

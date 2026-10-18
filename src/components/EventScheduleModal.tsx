@@ -248,6 +248,19 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
         const dayCapitalized = recurringDay.charAt(0).toUpperCase() + recurringDay.slice(1);
         const recurrenceRule = `Every ${dayCapitalized} at ${recurringTime}`;
 
+        const parentEvent = await AppwriteService.createEvent({
+          title: formData.title.trim(),
+          description: `Recurring tournament series: ${recurrenceRule}`,
+          venueId: formData.venueId,
+          venueName: selectedVenue?.name || 'Selected Venue',
+          seasonId: formData.seasonId,
+          scheduledAt: recurringDates[0]?.displayStr || formData.scheduledAt,
+          status: 'scheduled',
+          isRecurring: true,
+          recurrenceRule,
+          seriesId,
+        });
+
         const createdGames: Game[] = [];
         for (let i = 0; i < recurringDates.length; i++) {
           const dateItem = recurringDates[i];
@@ -256,6 +269,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
             : formData.title.trim();
 
           const created = await AppwriteService.createGame({
+            eventId: parentEvent.$id,
             title: eventTitle,
             venueId: formData.venueId,
             venueName: selectedVenue?.name || 'Selected Venue',
@@ -303,7 +317,18 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
       }
 
       // CASE 3: Creating a Single Tournament Event
+      const parentEvent = await AppwriteService.createEvent({
+        title: formData.title.trim(),
+        description: `${formData.title.trim()} tournament session`,
+        venueId: formData.venueId,
+        venueName: selectedVenue?.name || 'Selected Venue',
+        seasonId: formData.seasonId,
+        scheduledAt: formData.scheduledAt,
+        status: 'scheduled',
+      });
+
       const created = await AppwriteService.createGame({
+        eventId: parentEvent.$id,
         title: formData.title.trim(),
         venueId: formData.venueId,
         venueName: selectedVenue?.name || 'Selected Venue',
@@ -334,6 +359,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
         ...created,
         venueName: selectedVenue?.name || created.venueName,
       });
+
       onClose();
     } catch (err: any) {
       setErrorMsg(err.message || 'Error saving event');

@@ -23,7 +23,8 @@ import type {
   HotHandJackpot, 
   GameEntry,
   UserProfile,
-  UserRole
+  UserRole,
+  TournamentEvent
 } from './types/holdem';
 
 export const App: React.FC = () => {
@@ -31,6 +32,7 @@ export const App: React.FC = () => {
   const [viewHistory, setViewHistory] = useState<ViewMode[]>([]);
   
   const [games, setGames] = useState<Game[]>([]);
+  const [events, setEvents] = useState<TournamentEvent[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -55,7 +57,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     async function loadData() {
       try {
-        const [gList, vList, pList, sList, aList, hJackpot, user] = await Promise.all([
+        const [gList, vList, pList, sList, aList, hJackpot, user, eList] = await Promise.all([
           AppwriteService.getGames(),
           AppwriteService.getVenues(),
           AppwriteService.getPlayers(),
@@ -63,9 +65,11 @@ export const App: React.FC = () => {
           AppwriteService.getAnnouncements(),
           AppwriteService.getHotHandJackpot(),
           AuthService.getCurrentUser(),
+          AppwriteService.getEvents(),
         ]);
 
         setGames(gList);
+        setEvents(eList);
         setVenues(vList);
         setPlayers(pList);
         setSeasons(sList);
@@ -310,10 +314,12 @@ export const App: React.FC = () => {
             games={games}
             venues={venues}
             seasons={seasons}
+            events={events}
             currentUser={currentUser}
             onGamesChange={setGames}
             onVenuesChange={setVenues}
             onSeasonsChange={setSeasons}
+            onEventsChange={setEvents}
             onRoleChange={(newRole: UserRole) => {
               AuthService.updateRole(newRole);
               setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));

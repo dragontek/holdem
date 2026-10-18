@@ -1,6 +1,11 @@
 export type GameStatus = 'scheduled' | 'running' | 'paused' | 'completed' | 'canceled';
 export type SuitIcon = 'hearts' | 'diamonds' | 'spades' | 'clubs';
+export type UserRole = 'manager' | 'dealer' | 'scribe' | 'player';
 
+/**
+ * 1. League
+ * Has one or more Seasons and one or more Venues.
+ */
 export interface League {
   $id: string;
   name: string;
@@ -10,6 +15,10 @@ export interface League {
   createdAt: string;
 }
 
+/**
+ * 2. Season
+ * Belongs to a League. Has one or more Tournament Events.
+ */
 export interface Season {
   $id: string;
   leagueId: string;
@@ -19,6 +28,10 @@ export interface Season {
   isActive: boolean;
 }
 
+/**
+ * 3. Venue
+ * Belongs to a League. Hosts one or more Tournament Events.
+ */
 export interface Venue {
   $id: string;
   leagueId: string;
@@ -31,21 +44,31 @@ export interface Venue {
   longitude?: number;
 }
 
-export interface Player {
-  $id: string;
-  leagueId: string;
+/**
+ * 4. UserProfile & Player (Native Appwrite Users)
+ * Each player has an Appwrite account with roles and league tournament statistics.
+ */
+export interface UserProfile {
+  $id: string; // Native Appwrite user account ID
   name: string;
+  email: string;
+  role: UserRole;
   nickname?: string;
   avatarUrl?: string;
   suitIcon: SuitIcon;
-  email?: string;
   isMember: boolean;
   totalPoints: number;
   careerWins: number;
   careerKOs: number;
   gamesPlayed: number;
   highHandBadges?: number;
+  leagueId?: string;
 }
+
+/**
+ * Player is unified with native Appwrite UserProfile.
+ */
+export type Player = UserProfile;
 
 export interface BlindLevel {
   level: number;
@@ -57,8 +80,35 @@ export interface BlindLevel {
   breakTitle?: string;
 }
 
+/**
+ * 5. TournamentEvent
+ * Belongs to a Season and Venue. Contains one or more Games.
+ */
+export interface TournamentEvent {
+  $id: string;
+  seasonId: string;
+  venueId: string;
+  venueName: string;
+  title: string;
+  description?: string;
+  scheduledAt: string;
+  status: GameStatus;
+  isRecurring?: boolean;
+  recurrenceRule?: string;
+  seriesId?: string;
+  gamesCount?: number;
+  games?: Game[];
+}
+
+export type LeagueEvent = TournamentEvent;
+
+/**
+ * 6. Game
+ * Belongs to a TournamentEvent. Contains one or more Players (entries).
+ */
 export interface Game {
   $id: string;
+  eventId: string; // Parent TournamentEvent ID
   seasonId: string;
   venueId: string;
   venueName: string;
@@ -83,10 +133,14 @@ export interface Game {
   seriesId?: string;
 }
 
+/**
+ * 7. GameEntry
+ * Relates a Game to a Player (Native Appwrite User Account).
+ */
 export interface GameEntry {
   $id: string;
   gameId: string;
-  playerId: string;
+  playerId: string; // Native Appwrite User $id
   playerName: string;
   playerAvatar?: string;
   playerSuitIcon: SuitIcon;
@@ -122,12 +176,4 @@ export interface Announcement {
   createdAt: string;
 }
 
-export type UserRole = 'manager' | 'dealer' | 'scribe' | 'player';
-
-export interface UserProfile {
-  $id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-}
 

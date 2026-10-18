@@ -533,19 +533,21 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                     <div 
                       onClick={() => {
                         if (onSelectPlayer) {
-                          const p = players.find((x) => x.$id === entry.playerId) || {
+                          const p: Player = players.find((x) => x.$id === entry.playerId) || {
                             $id: entry.playerId,
                             name: entry.playerName,
+                            email: `${entry.playerName.toLowerCase().replace(/\s+/g, '')}@holdempro.com`,
+                            role: 'player',
                             totalPoints: 10000,
                             careerWins: 2,
                             careerKOs: entry.kosCount,
                             gamesPlayed: 8,
-                            seasonId: activeGame.seasonId,
                             leagueId: 'league_1',
                             suitIcon: 'spades',
                             isMember: true,
                           };
                           onSelectPlayer(p);
+
                         }
                       }}
                       className={onSelectPlayer ? 'cursor-pointer group/player' : ''}

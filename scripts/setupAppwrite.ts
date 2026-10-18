@@ -6,11 +6,13 @@ import {
   mockSeasons, 
   mockVenues, 
   mockPlayers, 
+  mockEvents,
   mockGames, 
   mockGameEntries, 
   mockAnnouncements, 
   mockHotHandJackpot 
 } from '../src/services/mockData';
+
 
 // Parse .env file
 const envPath = path.resolve(process.cwd(), '.env');
@@ -130,7 +132,8 @@ async function provisionDatabase() {
       { id: 'leagues', name: 'Leagues' },
       { id: 'seasons', name: 'Seasons' },
       { id: 'venues', name: 'Venues' },
-      { id: 'players', name: 'Players' },
+      { id: 'users', name: 'Users & Players' },
+      { id: 'events', name: 'Events' },
       { id: 'games', name: 'Games' },
       { id: 'game_entries', name: 'Game Entries' },
       { id: 'hot_hands', name: 'Hot Hands' },
@@ -193,17 +196,28 @@ async function provisionDatabase() {
     await createStringCol('venues', 'website', 500);
     await createStringCol('venues', 'imageUrl', 1000);
 
-    // Players Columns
-    await createStringCol('players', 'name', 255);
-    await createStringCol('players', 'nickname', 255);
-    await createStringCol('players', 'suitIcon', 50);
-    await createBoolCol('players', 'isMember');
-    await createIntCol('players', 'totalPoints');
-    await createIntCol('players', 'careerWins');
-    await createIntCol('players', 'careerKOs');
-    await createIntCol('players', 'gamesPlayed');
+    // Users & Players Columns (Native Appwrite Users)
+    await createStringCol('users', 'name', 255);
+    await createStringCol('users', 'email', 255);
+    await createStringCol('users', 'role', 50);
+    await createStringCol('users', 'nickname', 255);
+    await createStringCol('users', 'suitIcon', 50);
+    await createBoolCol('users', 'isMember');
+    await createIntCol('users', 'totalPoints');
+    await createIntCol('users', 'careerWins');
+    await createIntCol('users', 'careerKOs');
+    await createIntCol('users', 'gamesPlayed');
 
-    // Games Columns
+    // Events Columns (Seasons have one or more Events)
+    await createStringCol('events', 'title', 255);
+    await createStringCol('events', 'description', 1000);
+    await createStringCol('events', 'scheduledAt', 255);
+    await createStringCol('events', 'status', 50);
+    await createBoolCol('events', 'isRecurring');
+    await createStringCol('events', 'recurrenceRule', 255);
+    await createStringCol('events', 'seriesId', 255);
+
+    // Games Columns (Events contain one or more Games)
     await createStringCol('games', 'title', 255);
     await createStringCol('games', 'scheduledAt', 255);
     await createStringCol('games', 'status', 50);
@@ -252,23 +266,26 @@ async function provisionDatabase() {
     // 2. League (1) <--> Venues (N)
     await createRelCol('leagues', 'venues', RelationshipType.OneToMany, true, 'venues', 'league', RelationMutate.Cascade);
     
-    // 3. League (1) <--> Players (N)
-    await createRelCol('leagues', 'players', RelationshipType.OneToMany, true, 'players', 'league', RelationMutate.Cascade);
+    // 3. League (1) <--> Users & Players (N)
+    await createRelCol('leagues', 'users', RelationshipType.OneToMany, true, 'users', 'league', RelationMutate.Cascade);
     
-    // 4. League (1) <--> HotHands (N)
-    await createRelCol('leagues', 'hot_hands', RelationshipType.OneToMany, true, 'hotHands', 'league', RelationMutate.Cascade);
+    // 4. Season (1) <--> Events (N) (Seasons have one or more Events)
+    await createRelCol('seasons', 'events', RelationshipType.OneToMany, true, 'events', 'season', RelationMutate.Cascade);
 
-    // 5. Season (1) <--> Games (N)
-    await createRelCol('seasons', 'games', RelationshipType.OneToMany, true, 'games', 'season', RelationMutate.Cascade);
+    // 5. Venue (1) <--> Events (N) (Venues host one or more Events)
+    await createRelCol('venues', 'events', RelationshipType.OneToMany, true, 'events', 'venue', RelationMutate.Restrict);
 
-    // 6. Venue (1) <--> Games (N)
-    await createRelCol('venues', 'games', RelationshipType.OneToMany, true, 'games', 'venue', RelationMutate.Restrict);
+    // 6. Event (1) <--> Games (N) (Events contain one or more Games)
+    await createRelCol('events', 'games', RelationshipType.OneToMany, true, 'games', 'event', RelationMutate.Cascade);
 
-    // 7. Game (1) <--> GameEntries (N)
+    // 7. Game (1) <--> GameEntries (N) (Games contain one or more Players/Entries)
     await createRelCol('games', 'game_entries', RelationshipType.OneToMany, true, 'entries', 'game', RelationMutate.Cascade);
 
-    // 8. Player (1) <--> GameEntries (N)
-    await createRelCol('players', 'game_entries', RelationshipType.OneToMany, true, 'gameEntries', 'player', RelationMutate.Cascade);
+    // 8. User (1) <--> GameEntries (N) (Native Appwrite User account as Player)
+    await createRelCol('users', 'game_entries', RelationshipType.OneToMany, true, 'gameEntries', 'player', RelationMutate.Cascade);
+
+    // 9. League (1) <--> HotHands (N)
+    await createRelCol('leagues', 'hot_hands', RelationshipType.OneToMany, true, 'hotHands', 'league', RelationMutate.Cascade);
 
     console.log('\n⏳ Waiting 4 seconds for Appwrite column index builds...');
     await new Promise((resolve) => setTimeout(resolve, 4000));
@@ -338,31 +355,57 @@ async function provisionDatabase() {
       }
     }
 
-    // Seed Players with league relationship
-    for (const player of mockPlayers) {
+    // Seed Native Appwrite Users & Players
+    for (const user of mockPlayers) {
       try {
-        await tablesDb.createRow(databaseId, 'players', player.$id, {
-          name: player.name,
-          nickname: player.nickname || '',
-          suitIcon: player.suitIcon,
-          isMember: player.isMember,
-          totalPoints: player.totalPoints,
-          careerWins: player.careerWins,
-          careerKOs: player.careerKOs,
-          gamesPlayed: player.gamesPlayed,
+        await tablesDb.createRow(databaseId, 'users', user.$id, {
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          nickname: user.nickname || '',
+          suitIcon: user.suitIcon,
+          isMember: user.isMember,
+          totalPoints: user.totalPoints,
+          careerWins: user.careerWins,
+          careerKOs: user.careerKOs,
+          gamesPlayed: user.gamesPlayed,
           league: mockLeague.$id,
         }, defaultPermissions);
-        console.log(`  ✅ Seeded Player: ${player.name} -> League(${mockLeague.$id})`);
+        console.log(`  ✅ Seeded User/Player: ${user.name} (${user.role}) -> League(${mockLeague.$id})`);
       } catch (e: any) {
         if (e.code === 409 || e.type === 'row_already_exists') {
-          console.log(`  - Player (${player.name}) exists.`);
+          console.log(`  - User/Player (${user.name}) exists.`);
         } else {
-          console.error(`  ❌ Failed to seed Player (${player.name}):`, e.message || e);
+          console.error(`  ❌ Failed to seed User/Player (${user.name}):`, e.message || e);
         }
       }
     }
 
-    // Seed Games with season and venue relationships
+    // Seed Events with season and venue relationships
+    for (const event of mockEvents) {
+      try {
+        await tablesDb.createRow(databaseId, 'events', event.$id, {
+          title: event.title,
+          description: event.description || '',
+          scheduledAt: event.scheduledAt,
+          status: event.status,
+          isRecurring: Boolean(event.isRecurring),
+          recurrenceRule: event.recurrenceRule || '',
+          seriesId: event.seriesId || '',
+          season: event.seasonId,
+          venue: event.venueId,
+        }, defaultPermissions);
+        console.log(`  ✅ Seeded Event: ${event.title} -> Season(${event.seasonId}) & Venue(${event.venueId})`);
+      } catch (e: any) {
+        if (e.code === 409 || e.type === 'row_already_exists') {
+          console.log(`  - Event (${event.title}) exists.`);
+        } else {
+          console.error(`  ❌ Failed to seed Event (${event.title}):`, e.message || e);
+        }
+      }
+    }
+
+    // Seed Games with event, season and venue relationships
     for (const game of mockGames) {
       try {
         await tablesDb.createRow(databaseId, 'games', game.$id, {
@@ -380,10 +423,11 @@ async function provisionDatabase() {
           totalEntriesCount: game.totalEntriesCount,
           currentLevelIndex: game.currentLevelIndex || 0,
           secondsRemainingInLevel: game.secondsRemainingInLevel || 900,
+          event: game.eventId,
           season: game.seasonId,
           venue: game.venueId,
         }, defaultPermissions);
-        console.log(`  ✅ Seeded Game: ${game.title} -> Season(${game.seasonId}) & Venue(${game.venueId})`);
+        console.log(`  ✅ Seeded Game: ${game.title} -> Event(${game.eventId})`);
       } catch (e: any) {
         if (e.code === 409 || e.type === 'row_already_exists') {
           console.log(`  - Game (${game.title}) exists.`);
@@ -393,7 +437,7 @@ async function provisionDatabase() {
       }
     }
 
-    // Seed Game Entries with game and player relationships
+    // Seed Game Entries with game and user relationships
     for (const entry of mockGameEntries) {
       try {
         await tablesDb.createRow(databaseId, 'game_entries', entry.$id, {
@@ -420,6 +464,7 @@ async function provisionDatabase() {
         }
       }
     }
+
 
     // Seed Hot Hands with league relationship
     try {

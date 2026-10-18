@@ -62,6 +62,8 @@ export const PlayerSeatingModal: React.FC<PlayerSeatingModalProps> = ({
           $id: `player_walkin_${Date.now()}`,
           leagueId: 'league_1',
           name: newPlayerName.trim(),
+          email: `${newPlayerName.trim().toLowerCase().replace(/\s+/g, '')}@holdempro.com`,
+          role: 'player',
           nickname: newPlayerNickname.trim() || undefined,
           suitIcon: 'spades',
           isMember: false,
@@ -70,6 +72,7 @@ export const PlayerSeatingModal: React.FC<PlayerSeatingModalProps> = ({
           careerKOs: 0,
           gamesPlayed: 1,
         };
+
       } else {
         if (!selectedPlayer) return;
         playerToSeat = selectedPlayer;

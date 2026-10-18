@@ -1,5 +1,4 @@
-import React from 'react';
-import type { Game, Venue, Season } from '@/types/holdem';
+import type { Game, Venue, Season, TournamentEvent } from '@/types/holdem';
 import { 
   Calendar, 
   Plus, 
@@ -7,7 +6,8 @@ import {
   Clock, 
   Edit3, 
   Trash2, 
-  RotateCcw 
+  RotateCcw,
+  Layers 
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +16,7 @@ import { Card } from '@/components/ui/card';
 export interface AdminSchedulesSectionProps {
   games: Game[];
   filteredGames: Game[];
+  events?: TournamentEvent[];
   venues: Venue[];
   seasons: Season[];
   selectedScheduleSeason: string;
@@ -32,6 +33,7 @@ export interface AdminSchedulesSectionProps {
 export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
   games,
   filteredGames,
+  events = [],
   venues,
   seasons,
   selectedScheduleSeason,
@@ -50,17 +52,18 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <Badge variant="default" className="text-[10px]">
-              STEP 3: SCHEDULES
+              STEP 3: EVENTS &amp; GAMES
             </Badge>
             <span className="text-xs text-slate-400">Events within Championship Seasons</span>
           </div>
           <h2 className="text-lg font-black text-white flex items-center gap-2 mt-1">
-            <Calendar className="w-5 h-5 text-amber-400" /> Tournament Event Schedules ({filteredGames.length})
+            <Calendar className="w-5 h-5 text-amber-400" /> Tournament Events &amp; Games ({filteredGames.length})
           </h2>
           <p className="text-xs text-slate-400">
-            Schedule tournaments across host venues under the active championship season.
+            Season events contain one or more tournament games with registered player accounts.
           </p>
         </div>
+
 
         {/* Filters & Action */}
         <div className="flex flex-wrap items-center gap-2.5">
@@ -141,6 +144,7 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
           {filteredGames.map((game) => {
             const venue = venues.find((v) => v.$id === game.venueId);
             const season = seasons.find((s) => s.$id === game.seasonId);
+            const parentEvent = events.find((e) => e.$id === game.eventId);
             const isLive = game.status === 'running';
             const isCompleted = game.status === 'completed';
 
@@ -176,11 +180,20 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
                         </Badge>
                       )}
 
+                      {/* Parent Event badge */}
+                      {parentEvent && parentEvent.title !== game.title && (
+                        <Badge variant="outline" className="border-amber-500/30 text-amber-300">
+                          <Layers className="w-2.5 h-2.5 mr-1 text-amber-400" />
+                          {parentEvent.title}
+                        </Badge>
+                      )}
+
                       {/* Season context badge */}
                       <Badge variant="secondary">
                         {season?.name || 'Active Season'}
                       </Badge>
                     </div>
+
 
                     <span className="text-xs text-slate-400 font-medium">
                       {venue?.name || game.venueName}

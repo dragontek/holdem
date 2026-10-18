@@ -2,32 +2,64 @@ import { account, isAppwriteConfigured, ID } from '../lib/appwrite';
 import type { UserProfile, UserRole } from '../types/holdem';
 
 const LOCAL_STORAGE_USER_KEY = 'holdem_auth_user';
+const LOCAL_STORAGE_ALL_USERS_KEY = 'holdem_all_users';
 
-export const DEMO_USERS: Record<UserRole, UserProfile> = {
-  manager: {
-    $id: 'user_demo_manager',
+export const INITIAL_LEAGUE_USERS: UserProfile[] = [
+  {
+    $id: 'user_1',
     name: 'Sarah Connor',
     email: 'manager@holdempro.com',
     role: 'manager',
   },
-  dealer: {
-    $id: 'user_demo_dealer',
-    name: 'Johnny Chan (Dealer)',
+  {
+    $id: 'user_2',
+    name: 'Johnny Chan',
     email: 'dealer@holdempro.com',
     role: 'dealer',
   },
-  scribe: {
-    $id: 'user_demo_scribe',
-    name: 'Morgan Stanley (Scribe)',
+  {
+    $id: 'user_3',
+    name: 'Morgan Stanley',
     email: 'scribe@holdempro.com',
     role: 'scribe',
   },
-  player: {
-    $id: 'user_demo_player',
-    name: 'Ced 2452 (Player)',
+  {
+    $id: 'user_4',
+    name: 'Ced 2452',
     email: 'player@holdempro.com',
     role: 'player',
   },
+  {
+    $id: 'user_5',
+    name: 'Doyle Brunson',
+    email: 'doyle@holdempro.com',
+    role: 'dealer',
+  },
+  {
+    $id: 'user_6',
+    name: 'Phil Hellmuth',
+    email: 'phil@holdempro.com',
+    role: 'player',
+  },
+  {
+    $id: 'user_7',
+    name: 'Daniel Negreanu',
+    email: 'daniel@holdempro.com',
+    role: 'manager',
+  },
+  {
+    $id: 'user_8',
+    name: 'Linda Johnson',
+    email: 'linda@holdempro.com',
+    role: 'scribe',
+  },
+];
+
+export const DEMO_USERS: Record<UserRole, UserProfile> = {
+  manager: INITIAL_LEAGUE_USERS[0],
+  dealer: INITIAL_LEAGUE_USERS[1],
+  scribe: INITIAL_LEAGUE_USERS[2],
+  player: INITIAL_LEAGUE_USERS[3],
 };
 
 export class AuthService {
@@ -82,6 +114,15 @@ export class AuthService {
           role,
         };
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+
+        // Sync with all users directory
+        try {
+          const allUsers = await this.getAllUsers();
+          if (!allUsers.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
+            localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify([profile, ...allUsers]));
+          }
+        } catch {}
+
         return { user: profile };
       } catch (e: any) {
         return { user: null, error: e.message || 'Registration failed' };
@@ -96,6 +137,14 @@ export class AuthService {
       role,
     };
     localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+
+    try {
+      const allUsers = await this.getAllUsers();
+      if (!allUsers.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
+        localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify([profile, ...allUsers]));
+      }
+    } catch {}
+
     return { user: profile };
   }
 
@@ -149,7 +198,74 @@ export class AuthService {
   }
 
   /**
-   * Update User Role
+   * Get all registered users and staff
+   */
+  static async getAllUsers(): Promise<UserProfile[]> {
+    const raw = localStorage.getItem(LOCAL_STORAGE_ALL_USERS_KEY);
+    if (raw) {
+      try {
+        const users = JSON.parse(raw) as UserProfile[];
+        if (Array.isArray(users) && users.length > 0) return users;
+      } catch {}
+    }
+    localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(INITIAL_LEAGUE_USERS));
+    return INITIAL_LEAGUE_USERS;
+  }
+
+  /**
+   * Update a specific user's role (Manager capability)
+   */
+  static async updateUserRole(
+    userId: string,
+    newRole: UserRole,
+    currentAuthUser?: UserProfile | null
+  ): Promise<UserProfile[]> {
+    const users = await this.getAllUsers();
+    const updated = users.map((u) => (u.$id === userId ? { ...u, role: newRole } : u));
+    localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+
+    // If updating currently logged in user
+    if (currentAuthUser && currentAuthUser.$id === userId) {
+      if (isAppwriteConfigured) {
+        try {
+          await account.updatePrefs({ role: newRole });
+        } catch {}
+      }
+      const updatedProfile: UserProfile = { ...currentAuthUser, role: newRole };
+      localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(updatedProfile));
+    }
+
+    return updated;
+  }
+
+  /**
+   * Create or invite a new user with a specific role
+   */
+  static async createUser(name: string, email: string, role: UserRole): Promise<UserProfile> {
+    const users = await this.getAllUsers();
+    const newUser: UserProfile = {
+      $id: `user_${Date.now()}`,
+      name,
+      email,
+      role,
+    };
+    const updated = [newUser, ...users];
+    localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+    return newUser;
+  }
+
+  /**
+   * Delete a user from the directory
+   */
+  static async deleteUser(userId: string): Promise<UserProfile[]> {
+    const users = await this.getAllUsers();
+    const updated = users.filter((u) => u.$id !== userId);
+    localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+    return updated;
+  }
+
+  /**
+   * Update active User Role
    */
   static async updateRole(newRole: UserRole): Promise<boolean> {
     if (isAppwriteConfigured) {

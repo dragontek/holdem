@@ -23,6 +23,9 @@ interface GamesViewProps {
   announcements: Announcement[];
   hotHand: HotHandJackpot;
   onSelectGame: (game: Game) => void;
+  isDirector?: boolean;
+  onOpenScheduleModal?: () => void;
+  onOpenVenueModal?: () => void;
 }
 
 export const GamesView: React.FC<GamesViewProps> = ({
@@ -31,6 +34,9 @@ export const GamesView: React.FC<GamesViewProps> = ({
   announcements,
   hotHand,
   onSelectGame,
+  isDirector,
+  onOpenScheduleModal,
+  onOpenVenueModal,
 }) => {
   const [selectedVenueId, setSelectedVenueId] = useState<string>('all');
 
@@ -129,11 +135,34 @@ export const GamesView: React.FC<GamesViewProps> = ({
 
       {/* 4. Games Catalog */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-amber-400" /> Scheduled & Active Games
-          </h2>
-          <span className="text-xs text-slate-400">Tap any game for full blind timer & seating</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-amber-400" /> Scheduled & Active Games
+            </h2>
+            <span className="text-xs text-slate-400">Tap any game for full blind timer & seating</span>
+          </div>
+
+          {isDirector && (
+            <div className="flex items-center gap-2">
+              {onOpenVenueModal && (
+                <button
+                  onClick={onOpenVenueModal}
+                  className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs font-semibold transition-all shadow-sm"
+                >
+                  Venues Hub
+                </button>
+              )}
+              {onOpenScheduleModal && (
+                <button
+                  onClick={onOpenScheduleModal}
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all shadow-md"
+                >
+                  + Schedule Event
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

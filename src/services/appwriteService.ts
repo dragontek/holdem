@@ -1,4 +1,4 @@
-import { databases, tablesDb, isAppwriteConfigured, DATABASE_ID, APPWRITE_TABLES, APPWRITE_COLLECTIONS } from '../lib/appwrite';
+import { databases, tablesDb, isAppwriteConfigured, DATABASE_ID, APPWRITE_TABLES, APPWRITE_COLLECTIONS, ID } from '../lib/appwrite';
 import { 
   mockLeague, 
   mockSeasons, 
@@ -288,6 +288,370 @@ export class AppwriteService {
       } catch {
         return false;
       }
+    }
+  }
+
+  // ==========================================
+  // --- VENUE CRUD METHODS ---
+  // ==========================================
+
+  static async createVenue(venueData: Omit<Venue, '$id'>): Promise<Venue> {
+    const newId = ID.unique();
+    const payload = {
+      name: venueData.name,
+      address: venueData.address,
+      phone: venueData.phone,
+      website: venueData.website || '',
+      imageUrl: venueData.imageUrl || '',
+      league: mockLeague.$id,
+    };
+
+    if (isAppwriteConfigured) {
+      try {
+        const res = await tablesDb.createRow(DATABASE_ID, APPWRITE_TABLES.VENUES, newId, payload);
+        return {
+          $id: res.$id || newId,
+          leagueId: mockLeague.$id,
+          ...payload,
+        } as Venue;
+      } catch (e) {
+        console.warn('Appwrite createVenue failed, returning local instance:', e);
+      }
+    }
+
+    return {
+      $id: newId,
+      leagueId: mockLeague.$id,
+      ...payload,
+    } as Venue;
+  }
+
+  static async updateVenue(venueId: string, updates: Partial<Venue>): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      const payload: Record<string, any> = {};
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.address !== undefined) payload.address = updates.address;
+      if (updates.phone !== undefined) payload.phone = updates.phone;
+      if (updates.website !== undefined) payload.website = updates.website;
+      if (updates.imageUrl !== undefined) payload.imageUrl = updates.imageUrl;
+
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.VENUES, venueId, payload);
+      return true;
+    } catch (e) {
+      console.error('Failed to update venue in Appwrite:', e);
+      return false;
+    }
+  }
+
+  static async deleteVenue(venueId: string): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.VENUES, venueId);
+      return true;
+    } catch (e) {
+      console.error('Failed to delete venue from Appwrite:', e);
+      return false;
+    }
+  }
+
+  // ==========================================
+  // --- GAME / EVENT SCHEDULE CRUD METHODS ---
+  // ==========================================
+
+  static async createGame(gameData: Omit<Game, '$id'>): Promise<Game> {
+    const newId = ID.unique();
+    const payload = {
+      title: gameData.title,
+      scheduledAt: gameData.scheduledAt,
+      status: gameData.status || 'scheduled',
+      dealerName: gameData.dealerName || '',
+      buyinAmount: gameData.buyinAmount || 30,
+      rebuyAmount: gameData.rebuyAmount || 20,
+      addonAmount: gameData.addonAmount || 10,
+      startingChips: gameData.startingChips || 15000,
+      hotHandJackpot: gameData.hotHandJackpot || 0,
+      totalPlayersCount: gameData.totalPlayersCount || 0,
+      remainingPlayersCount: gameData.remainingPlayersCount || 0,
+      totalEntriesCount: gameData.totalEntriesCount || 0,
+      currentLevelIndex: gameData.currentLevelIndex || 0,
+      secondsRemainingInLevel: gameData.secondsRemainingInLevel || 900,
+      season: gameData.seasonId || 'season_2026_crawl3',
+      venue: gameData.venueId,
+    };
+
+    if (isAppwriteConfigured) {
+      try {
+        const res = await tablesDb.createRow(DATABASE_ID, APPWRITE_TABLES.GAMES, newId, payload);
+        return {
+          ...gameData,
+          $id: res.$id || newId,
+          seasonId: payload.season,
+          venueId: payload.venue,
+          blindSchedule: mockGames[0].blindSchedule,
+        };
+      } catch (e) {
+        console.warn('Appwrite createGame failed, returning local instance:', e);
+      }
+    }
+
+    return {
+      $id: newId,
+      ...gameData,
+      blindSchedule: mockGames[0].blindSchedule,
+    };
+  }
+
+  static async updateGame(gameId: string, updates: Partial<Game>): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      const payload: Record<string, any> = {};
+      if (updates.title !== undefined) payload.title = updates.title;
+      if (updates.scheduledAt !== undefined) payload.scheduledAt = updates.scheduledAt;
+      if (updates.status !== undefined) payload.status = updates.status;
+      if (updates.dealerName !== undefined) payload.dealerName = updates.dealerName;
+      if (updates.buyinAmount !== undefined) payload.buyinAmount = updates.buyinAmount;
+      if (updates.rebuyAmount !== undefined) payload.rebuyAmount = updates.rebuyAmount;
+      if (updates.addonAmount !== undefined) payload.addonAmount = updates.addonAmount;
+      if (updates.startingChips !== undefined) payload.startingChips = updates.startingChips;
+      if (updates.hotHandJackpot !== undefined) payload.hotHandJackpot = updates.hotHandJackpot;
+      if (updates.totalPlayersCount !== undefined) payload.totalPlayersCount = updates.totalPlayersCount;
+      if (updates.remainingPlayersCount !== undefined) payload.remainingPlayersCount = updates.remainingPlayersCount;
+      if (updates.totalEntriesCount !== undefined) payload.totalEntriesCount = updates.totalEntriesCount;
+      if (updates.currentLevelIndex !== undefined) payload.currentLevelIndex = updates.currentLevelIndex;
+      if (updates.secondsRemainingInLevel !== undefined) payload.secondsRemainingInLevel = updates.secondsRemainingInLevel;
+      if (updates.venueId !== undefined) payload.venue = updates.venueId;
+      if (updates.seasonId !== undefined) payload.season = updates.seasonId;
+
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId, payload);
+      return true;
+    } catch (e) {
+      console.error('Failed to update game in Appwrite:', e);
+      return false;
+    }
+  }
+
+  static async deleteGame(gameId: string): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId);
+      return true;
+    } catch (e) {
+      console.error('Failed to delete game from Appwrite:', e);
+      return false;
+    }
+  }
+
+  // ==========================================
+  // --- LIVE TOURNAMENT & GAME ENTRIES ---
+  // ==========================================
+
+  static async addGameEntry(
+    gameId: string,
+    player: Player,
+    tableNumber: number,
+    seatNumber: number,
+    currentGame: Game
+  ): Promise<GameEntry> {
+    const newId = ID.unique();
+    const payload = {
+      playerName: player.name,
+      playerSuitIcon: player.suitIcon || 'spades',
+      tableNumber,
+      seatNumber,
+      buyinsCount: 1,
+      rebuysCount: 0,
+      addonsCount: 0,
+      finishPosition: 0,
+      pointsAwarded: 0,
+      kosCount: 0,
+      isEliminated: false,
+      game: gameId,
+      player: player.$id,
+    };
+
+    const newEntry: GameEntry = {
+      $id: newId,
+      gameId,
+      playerId: player.$id,
+      playerName: player.name,
+      playerSuitIcon: player.suitIcon || 'spades',
+      tableNumber,
+      seatNumber,
+      buyinsCount: 1,
+      rebuysCount: 0,
+      addonsCount: 0,
+      finishPosition: 0,
+      pointsAwarded: 0,
+      kosCount: 0,
+      isEliminated: false,
+    };
+
+    if (isAppwriteConfigured) {
+      try {
+        const res = await tablesDb.createRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, newId, payload);
+        newEntry.$id = res.$id || newId;
+
+        await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId, {
+          totalPlayersCount: currentGame.totalPlayersCount + 1,
+          remainingPlayersCount: currentGame.remainingPlayersCount + 1,
+          totalEntriesCount: currentGame.totalEntriesCount + 1,
+        });
+      } catch (e) {
+        console.warn('Appwrite addGameEntry error:', e);
+      }
+    }
+
+    return newEntry;
+  }
+
+  static async updatePlayerRebuys(
+    gameId: string,
+    entryId: string,
+    rebuysCount: number,
+    currentGame: Game
+  ): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, entryId, {
+        rebuysCount,
+      });
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId, {
+        totalEntriesCount: currentGame.totalEntriesCount + 1,
+      });
+      return true;
+    } catch (e) {
+      console.error('Failed to update player rebuys:', e);
+      return false;
+    }
+  }
+
+  static async updatePlayerAddons(
+    entryId: string,
+    addonsCount: number
+  ): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, entryId, {
+        addonsCount,
+      });
+      return true;
+    } catch (e) {
+      console.error('Failed to update player addons:', e);
+      return false;
+    }
+  }
+
+  static async movePlayerSeat(
+    entryId: string,
+    tableNumber: number,
+    seatNumber: number
+  ): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, entryId, {
+        tableNumber,
+        seatNumber,
+      });
+      return true;
+    } catch (e) {
+      console.error('Failed to move player seat:', e);
+      return false;
+    }
+  }
+
+  static async recordEliminationWithKO(
+    gameId: string,
+    eliminatedEntryId: string,
+    finishPosition: number,
+    remainingPlayersCount: number,
+    koWinnerEntryId?: string,
+    koWinnerPlayerId?: string
+  ): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      // 1. Mark eliminated player
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, eliminatedEntryId, {
+        isEliminated: true,
+        finishPosition,
+      });
+
+      // 2. Decrement remaining players on game
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId, {
+        remainingPlayersCount,
+      });
+
+      // 3. Award KO to killer if applicable
+      if (koWinnerEntryId) {
+        try {
+          const entry = await tablesDb.getRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, koWinnerEntryId);
+          const currentKOs = (entry as any).kosCount || 0;
+          await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, koWinnerEntryId, {
+            kosCount: currentKOs + 1,
+          });
+        } catch {}
+      }
+
+      if (koWinnerPlayerId) {
+        try {
+          const player = await tablesDb.getRow(DATABASE_ID, APPWRITE_TABLES.PLAYERS, koWinnerPlayerId);
+          const careerKOs = (player as any).careerKOs || 0;
+          await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.PLAYERS, koWinnerPlayerId, {
+            careerKOs: careerKOs + 1,
+          });
+        } catch {}
+      }
+
+      return true;
+    } catch (e) {
+      console.error('Failed to record elimination:', e);
+      return false;
+    }
+  }
+
+  static async finalizeTournament(
+    gameId: string,
+    results: { entryId: string; playerId: string; finishPosition: number; points: number }[]
+  ): Promise<boolean> {
+    if (!isAppwriteConfigured) return true;
+    try {
+      // 1. Update Game to completed
+      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId, {
+        status: 'completed',
+        remainingPlayersCount: 0,
+      });
+
+      // 2. Update each game entry with finish position & points awarded
+      for (const res of results) {
+        try {
+          await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, res.entryId, {
+            finishPosition: res.finishPosition,
+            pointsAwarded: res.points,
+            isEliminated: res.finishPosition > 1,
+          });
+
+          // 3. Update player career points and stats
+          if (res.playerId) {
+            try {
+              const p = await tablesDb.getRow(DATABASE_ID, APPWRITE_TABLES.PLAYERS, res.playerId);
+              const totalPoints = ((p as any).totalPoints || 0) + res.points;
+              const gamesPlayed = ((p as any).gamesPlayed || 0) + 1;
+              const careerWins = ((p as any).careerWins || 0) + (res.finishPosition === 1 ? 1 : 0);
+
+              await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.PLAYERS, res.playerId, {
+                totalPoints,
+                gamesPlayed,
+                careerWins,
+              });
+            } catch {}
+          }
+        } catch {}
+      }
+
+      return true;
+    } catch (e) {
+      console.error('Failed to finalize tournament:', e);
+      return false;
     }
   }
 }

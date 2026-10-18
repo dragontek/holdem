@@ -9,6 +9,8 @@ import { VenueTVDisplay } from './components/VenueTVDisplay';
 import { QRCheckinModal } from './components/QRCheckinModal';
 import { AppwriteSetupModal } from './components/AppwriteSetupModal';
 import { DirectorAuthModal } from './components/DirectorAuthModal';
+import { VenueManagerModal } from './components/VenueManagerModal';
+import { EventScheduleModal } from './components/EventScheduleModal';
 import { AppwriteService } from './services/appwriteService';
 import { AuthService } from './services/authService';
 import type { 
@@ -37,6 +39,9 @@ export const App: React.FC = () => {
   const [isQROpen, setIsQROpen] = useState<boolean>(false);
   const [isAppwriteOpen, setIsAppwriteOpen] = useState<boolean>(false);
   const [isDirectorAuthOpen, setIsDirectorAuthOpen] = useState<boolean>(false);
+  const [isVenueModalOpen, setIsVenueModalOpen] = useState<boolean>(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
+  const [gameToEdit, setGameToEdit] = useState<Game | null>(null);
   const [isDirector, setIsDirector] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -171,6 +176,12 @@ export const App: React.FC = () => {
             announcements={announcements}
             hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: 'Quad 6\'s', currentPool: 140, isClaimed: false }}
             onSelectGame={handleSelectGame}
+            isDirector={isDirector}
+            onOpenScheduleModal={() => {
+              setGameToEdit(null);
+              setIsScheduleModalOpen(true);
+            }}
+            onOpenVenueModal={() => setIsVenueModalOpen(true)}
           />
         )}
 
@@ -196,8 +207,15 @@ export const App: React.FC = () => {
             activeGame={activeGameToDisplay}
             gameEntries={gameEntries}
             players={players}
+            venues={venues}
+            seasons={seasons}
+            allGames={games}
             onUpdateGame={handleUpdateGame}
             onEliminatePlayer={handleEliminatePlayer}
+            onSelectGame={handleSelectGame}
+            onVenuesChange={setVenues}
+            onGamesChange={setGames}
+            onEntriesChange={setGameEntries}
           />
         )}
       </main>
@@ -220,6 +238,44 @@ export const App: React.FC = () => {
         onClose={() => setIsDirectorAuthOpen(false)}
         isDirector={isDirector}
         onAuthChange={setIsDirector}
+      />
+
+      {/* Venues Manager Modal */}
+      <VenueManagerModal
+        isOpen={isVenueModalOpen}
+        onClose={() => setIsVenueModalOpen(false)}
+        venues={venues}
+        onVenuesChange={setVenues}
+      />
+
+      {/* Event Schedule Modal */}
+      <EventScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => {
+          setIsScheduleModalOpen(false);
+          setGameToEdit(null);
+        }}
+        gameToEdit={gameToEdit}
+        venues={venues}
+        seasons={seasons}
+        onGameSaved={(savedGame) => {
+          if (gameToEdit) {
+            setGames((prev) => prev.map((g) => (g.$id === savedGame.$id ? savedGame : g)));
+            if (selectedGame?.$id === savedGame.$id) {
+              setSelectedGame(savedGame);
+            }
+          } else {
+            setGames((prev) => [savedGame, ...prev]);
+            setSelectedGame(savedGame);
+          }
+        }}
+        onGameDeleted={(deletedId) => {
+          setGames((prev) => prev.filter((g) => g.$id !== deletedId));
+          if (selectedGame?.$id === deletedId && games.length > 1) {
+            const fallback = games.find((g) => g.$id !== deletedId);
+            if (fallback) setSelectedGame(fallback);
+          }
+        }}
       />
     </div>
   );

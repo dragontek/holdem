@@ -134,6 +134,7 @@ export interface Game {
   isRecurring?: boolean;
   recurrenceRule?: string;
   seriesId?: string;
+  rsvpPlayerIds?: string[];
 }
 
 /**

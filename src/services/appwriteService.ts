@@ -326,6 +326,7 @@ export class AppwriteService {
         isRecurring: Boolean(doc.isRecurring),
         recurrenceRule: doc.recurrenceRule,
         seriesId: doc.seriesId,
+        rsvpPlayerIds: Array.isArray(doc.rsvpPlayerIds) ? doc.rsvpPlayerIds : [],
       }));
 
       if (eventId) return mapped.filter((g) => g.eventId === eventId);
@@ -334,6 +335,47 @@ export class AppwriteService {
       if (eventId) return mockGames.filter((g) => g.eventId === eventId);
       return mockGames;
     }
+  }
+
+  // Toggle Player RSVP for a scheduled tournament
+  static async toggleRSVP(gameId: string, playerId: string): Promise<Game> {
+    const games = await this.getGames();
+    const game = games.find((g) => g.$id === gameId);
+    if (!game) throw new Error('Game not found');
+
+    const currentRsvps = game.rsvpPlayerIds || [];
+    const isRsvped = currentRsvps.includes(playerId);
+    const updatedRsvps = isRsvped
+      ? currentRsvps.filter((id) => id !== playerId)
+      : [...currentRsvps, playerId];
+
+    const updatedGame: Game = {
+      ...game,
+      rsvpPlayerIds: updatedRsvps,
+    };
+
+    if (isAppwriteConfigured) {
+      try {
+        await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId, {
+          rsvpPlayerIds: updatedRsvps,
+        } as any);
+      } catch {
+        try {
+          await databases.updateDocument(DATABASE_ID, APPWRITE_COLLECTIONS.GAMES, gameId, {
+            rsvpPlayerIds: updatedRsvps,
+          } as any);
+        } catch (e) {
+          console.warn('Appwrite toggleRSVP fallback to local cache', e);
+        }
+      }
+    }
+
+    const gIdx = mockGames.findIndex((g) => g.$id === gameId);
+    if (gIdx !== -1) {
+      mockGames[gIdx] = updatedGame;
+    }
+
+    return updatedGame;
   }
 
 

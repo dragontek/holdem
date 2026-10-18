@@ -299,16 +299,29 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
               {/* Score / Metric Display */}
               <div className="flex items-center gap-4 relative z-10">
                 <div className="text-right">
-                  <div className="text-base font-black text-amber-400">
-                    {activeSubTab === 'wins'
-                      ? `${player.careerWins} Wins`
-                      : activeSubTab === 'kos'
-                      ? `${player.careerKOs} KOs`
-                      : `${player.totalPoints.toLocaleString()} pts`}
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-medium">
-                    {player.gamesPlayed} games played
-                  </div>
+                  {activeSubTab === 'ranking' ? (
+                    <>
+                      <div className="text-base font-black text-amber-400">
+                        Seed #{rank}
+                      </div>
+                      <div className="text-[10px] text-emerald-400 font-semibold">
+                        {rank <= 10 ? '✓ Qualified for TOC' : 'In the Hunt'}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-base font-black text-amber-400">
+                        {activeSubTab === 'wins'
+                          ? `${player.careerWins} Wins`
+                          : activeSubTab === 'kos'
+                          ? `${player.careerKOs} KOs`
+                          : `${player.totalPoints.toLocaleString()} pts`}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-medium">
+                        {player.gamesPlayed} games played
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <ChevronRight className="w-5 h-5 text-slate-600 group-hover:text-amber-400 group-hover:translate-x-0.5 transition-all" />

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { Game, Venue, Announcement, HotHandJackpot } from '../types/holdem';
+import type { Game, Venue, Announcement, HotHandJackpot, UserProfile } from '../types/holdem';
 import { 
   Calendar, 
   MapPin, 
@@ -28,6 +28,9 @@ interface GamesViewProps {
   onOpenScheduleModal?: () => void;
   onOpenVenueModal?: () => void;
   seasonName?: string;
+  currentUser?: UserProfile | null;
+  onToggleRSVP?: (gameId: string) => void;
+  onNavigateInfo?: () => void;
 }
 
 export const GamesView: React.FC<GamesViewProps> = ({
@@ -40,6 +43,9 @@ export const GamesView: React.FC<GamesViewProps> = ({
   onOpenScheduleModal,
   onOpenVenueModal,
   seasonName = '2026 Crawl 3',
+  currentUser,
+  onToggleRSVP,
+  onNavigateInfo,
 }) => {
   const [selectedVenueId, setSelectedVenueId] = useState<string>('all');
 
@@ -101,6 +107,19 @@ export const GamesView: React.FC<GamesViewProps> = ({
                 <h3 className="text-lg font-bold text-white tracking-tight">{ann.title}</h3>
               </div>
               <p className="text-sm text-rose-100/90 leading-relaxed max-w-4xl">{ann.content}</p>
+              {onNavigateInfo && (
+                <div className="pt-1.5">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNavigateInfo();
+                    }}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 hover:text-amber-200 underline underline-offset-4 cursor-pointer"
+                  >
+                    View Official League Rules &amp; Points Structure →
+                  </button>
+                </div>
+              )}
             </div>
           </div>
           <div className="absolute -right-8 -bottom-8 w-40 h-40 bg-red-500/10 rounded-full blur-2xl pointer-events-none" />
@@ -308,6 +327,36 @@ export const GamesView: React.FC<GamesViewProps> = ({
                       {(game.startingChips / 1000).toFixed(0)}k
                     </div>
                   </div>
+                </div>
+
+                {/* RSVP / Attending Action Bar */}
+                <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                    <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>{game.rsvpPlayerIds?.length || 0} RSVPs confirmed</span>
+                  </div>
+
+                  {game.status === 'scheduled' && onToggleRSVP && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleRSVP(game.$id);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        currentUser && game.rsvpPlayerIds?.includes(currentUser.$id)
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+                          : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-sm'
+                      }`}
+                      title={currentUser ? 'Toggle tournament RSVP' : 'Sign in to RSVP'}
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      <span>
+                        {currentUser && game.rsvpPlayerIds?.includes(currentUser.$id)
+                          ? '✓ Attending'
+                          : 'RSVP Now'}
+                      </span>
+                    </button>
+                  )}
                 </div>
 
               </div>

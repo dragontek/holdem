@@ -12,6 +12,8 @@ import { AppwriteSetupModal } from './components/AppwriteSetupModal';
 import { AuthModal } from './components/AuthModal';
 import { VenueManagerModal } from './components/VenueManagerModal';
 import { EventScheduleModal } from './components/EventScheduleModal';
+import { InfoView } from './components/InfoView';
+import { GalleryView } from './components/GalleryView';
 import { AppwriteService } from './services/appwriteService';
 import { AuthService } from './services/authService';
 import type { 
@@ -38,6 +40,7 @@ export const App: React.FC = () => {
   const [players, setPlayers] = useState<Player[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [leagues, setLeagues] = useState<League[]>([]);
+  const [activeLeagueId, setActiveLeagueId] = useState<string>('league_1');
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [hotHand, setHotHand] = useState<HotHandJackpot | null>(null);
   
@@ -77,6 +80,9 @@ export const App: React.FC = () => {
         setPlayers(pList);
         setSeasons(sList);
         setLeagues(lList);
+        if (lList.length > 0) {
+          setActiveLeagueId(lList[0].$id);
+        }
         setAnnouncements(aList);
         setHotHand(hJackpot);
         setCurrentUser(user);
@@ -101,7 +107,7 @@ export const App: React.FC = () => {
   // Sync with browser history and popstate
   useEffect(() => {
     const rawHash = window.location.hash.replace('#', '') as ViewMode;
-    const validViews: ViewMode[] = ['games', 'leaderboard', 'stats', 'director', 'admin', 'tv'];
+    const validViews: ViewMode[] = ['games', 'leaderboard', 'stats', 'director', 'admin', 'tv', 'info', 'gallery'];
     if (validViews.includes(rawHash)) {
       setCurrentView(rawHash);
       window.history.replaceState({ view: rawHash }, '', `#${rawHash}`);
@@ -207,6 +213,22 @@ export const App: React.FC = () => {
     );
   };
 
+  const handleToggleRSVP = async (gameId: string) => {
+    if (!currentUser) {
+      setIsAuthOpen(true);
+      return;
+    }
+    try {
+      const updatedGame = await AppwriteService.toggleRSVP(gameId, currentUser.$id);
+      setGames((prev) => prev.map((g) => (g.$id === gameId ? updatedGame : g)));
+      if (selectedGame?.$id === gameId) {
+        setSelectedGame(updatedGame);
+      }
+    } catch (e) {
+      console.error('Failed to toggle RSVP', e);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white space-y-4">
@@ -219,7 +241,15 @@ export const App: React.FC = () => {
     );
   }
 
-  const activeSeasonName = seasons.find((s) => s.isActive)?.name || '2026 Crawl 3';
+  const leagueSeasons = seasons.filter((s) => !s.leagueId || s.leagueId === activeLeagueId);
+  const leagueVenues = venues.filter((v) => !v.leagueId || v.leagueId === activeLeagueId);
+  const activeSeasonName = (leagueSeasons.find((s) => s.isActive) || leagueSeasons[0] || seasons[0])?.name || '2026 Crawl 3';
+  const leagueGames = games.filter((g) => {
+    const venue = venues.find((v) => v.$id === g.venueId);
+    if (venue?.leagueId && venue.leagueId !== activeLeagueId) return false;
+    return true;
+  });
+
   const activeGameToDisplay = selectedGame || games[0];
   const previousView = viewHistory[viewHistory.length - 1];
   const backLabel = previousView === 'director' ? 'Back to Director Desk' : previousView === 'games' ? 'Back to Games' : 'Back to Standings';
@@ -254,14 +284,17 @@ export const App: React.FC = () => {
         onOpenAuth={() => setIsAuthOpen(true)}
         currentUser={currentUser}
         seasonName={activeSeasonName}
+        leagues={leagues}
+        activeLeagueId={activeLeagueId}
+        onSelectLeague={(id) => setActiveLeagueId(id)}
       />
 
       {/* Main View Container */}
       <main className="flex-1">
         {currentView === 'games' && (
           <GamesView
-            games={games}
-            venues={venues}
+            games={leagueGames}
+            venues={leagueVenues.length > 0 ? leagueVenues : venues}
             seasonName={activeSeasonName}
             announcements={announcements}
             hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: "Quad 6's", currentPool: 140, isClaimed: false }}
@@ -272,14 +305,17 @@ export const App: React.FC = () => {
               setIsScheduleModalOpen(true);
             }}
             onOpenVenueModal={() => setIsVenueModalOpen(true)}
+            currentUser={currentUser}
+            onToggleRSVP={handleToggleRSVP}
+            onNavigateInfo={() => handleNavigate('info')}
           />
         )}
 
         {currentView === 'leaderboard' && (
           <LeaderboardView
             players={players}
-            seasons={seasons}
-            venues={venues}
+            seasons={leagueSeasons.length > 0 ? leagueSeasons : seasons}
+            venues={leagueVenues.length > 0 ? leagueVenues : venues}
             onSelectPlayer={handleSelectPlayer}
           />
         )}
@@ -334,6 +370,17 @@ export const App: React.FC = () => {
             onBack={handleGoBack}
             backLabel={previousView === 'director' ? 'Back to Director Desk' : 'Back to Games'}
           />
+        )}
+
+        {currentView === 'info' && (
+          <InfoView
+            venues={leagueVenues.length > 0 ? leagueVenues : venues}
+            seasonName={activeSeasonName}
+          />
+        )}
+
+        {currentView === 'gallery' && (
+          <GalleryView />
         )}
       </main>
 

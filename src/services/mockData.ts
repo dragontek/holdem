@@ -372,6 +372,7 @@ export const mockGames: Game[] = [
     remainingPlayersCount: 18,
     totalEntriesCount: 31,
     blindSchedule: defaultBlindSchedule,
+    rsvpPlayerIds: ['user_player1', 'user_player2', 'user_player3'],
   },
   {
     $id: 'game_today_murray_street',
@@ -395,6 +396,7 @@ export const mockGames: Game[] = [
     remainingPlayersCount: 16,
     totalEntriesCount: 16,
     blindSchedule: defaultBlindSchedule,
+    rsvpPlayerIds: ['user_player1', 'user_player4'],
   },
   {
     $id: 'game_yesterday_single_barrel',

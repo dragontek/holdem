@@ -124,7 +124,7 @@ export const ScheduleSpotlightHero: React.FC<ScheduleSpotlightHeroProps> = ({
               onClick={() => onSelectGame(game)}
               className="font-semibold cursor-pointer"
             >
-              <span>Tournament Desk</span>
+              <span>{currentUser && (currentUser.role === 'manager' || currentUser.role === 'admin' || currentUser.role === 'dealer') ? 'Manage Game' : 'View Live Game'}</span>
               <ChevronRight className="w-4 h-4" />
             </Button>
           </div>

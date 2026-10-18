@@ -92,7 +92,7 @@ export const AdminRBACSection: React.FC<AdminRBACSectionProps> = ({
                 <td className="py-2.5 px-3 text-slate-500">✗ None</td>
               </tr>
               <tr>
-                <td className="py-2.5 px-3 font-semibold text-white">Director Desk Access (Live Tournament Operator)</td>
+                <td className="py-2.5 px-3 font-semibold text-white">Game Manager Access (Live Game Management)</td>
                 <td className="py-2.5 px-3 text-rose-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>

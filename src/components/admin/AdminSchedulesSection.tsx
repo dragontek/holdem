@@ -243,7 +243,7 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
                         size="sm"
                         onClick={() => onSelectGame(game)}
                       >
-                        <PlayCircle className="w-3.5 h-3.5" /> Launch Director Desk
+                        <PlayCircle className="w-3.5 h-3.5" /> Manage Game
                       </Button>
                     )}
                   </div>

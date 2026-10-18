@@ -4,7 +4,7 @@ import type { ViewMode, PortalMode } from './components/Navigation';
 import { PlayerScheduleView } from './components/schedule/PlayerScheduleView';
 import { PlayerStandingsView } from './components/standings/PlayerStandingsView';
 import { PlayerStatsView } from './components/PlayerStatsView';
-import { DirectorDesk } from './components/DirectorDesk';
+import { GameManagerView } from './components/game/GameManagerView';
 import { AdminView } from './components/AdminView';
 import { VenueTVDisplay } from './components/VenueTVDisplay';
 import { QRCheckinModal } from './components/QRCheckinModal';
@@ -110,7 +110,7 @@ export const App: React.FC = () => {
     if (clean === 'schedule' || clean === 'games') return 'games';
     if (clean === 'standings' || clean === 'leaderboard') return 'leaderboard';
     if (clean === 'rules' || clean === 'info' || clean === 'gallery' || clean === 'guide') return 'guide';
-    if (clean === 'desk' || clean === 'director') return 'director';
+    if (clean === 'desk' || clean === 'director' || clean === 'game' || clean === 'game-manager' || clean === 'manage-game') return 'director';
     if (clean === 'ops' || clean === 'admin') return 'admin';
     if (clean === 'tv') return 'tv';
     if (clean === 'stats') return 'stats';
@@ -294,7 +294,7 @@ export const App: React.FC = () => {
 
   const activeGameToDisplay = selectedGame || games[0];
   const previousView = viewHistory[viewHistory.length - 1];
-  const backLabel = previousView === 'director' ? 'Back to Director Desk' : previousView === 'games' ? 'Back to Games' : 'Back to Standings';
+  const backLabel = previousView === 'director' ? 'Back to Game Manager' : previousView === 'games' ? 'Back to Games' : 'Back to Standings';
 
   // TV View Mode Renders Fullscreen Broadcast Component
   if (currentView === 'tv' && activeGameToDisplay && hotHand) {
@@ -368,7 +368,7 @@ export const App: React.FC = () => {
         )}
 
         {currentView === 'director' && activeGameToDisplay && (
-          <DirectorDesk
+          <GameManagerView
             activeGame={activeGameToDisplay}
             gameEntries={gameEntries}
             players={players}
@@ -406,7 +406,7 @@ export const App: React.FC = () => {
             }}
             onSelectGame={handleSelectGame}
             onBack={handleGoBack}
-            backLabel={previousView === 'director' ? 'Back to Director Desk' : 'Back to Games'}
+            backLabel={previousView === 'director' ? 'Back to Game Manager' : 'Back to Games'}
           />
         )}
 

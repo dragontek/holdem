@@ -346,8 +346,12 @@ export class AuthService {
     return role === 'admin' || role === 'manager';
   }
 
-  static canAccessDirector(role?: UserRole): boolean {
+  static canManageGame(role?: UserRole): boolean {
     return role === 'admin' || role === 'manager' || role === 'dealer' || role === 'scribe';
+  }
+
+  static canAccessDirector(role?: UserRole): boolean {
+    return this.canManageGame(role);
   }
 
   static canManageClock(role?: UserRole): boolean {

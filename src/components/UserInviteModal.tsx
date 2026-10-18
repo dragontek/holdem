@@ -189,7 +189,7 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
                   {role === 'dealer' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
                 </div>
                 <p className="text-[11px] text-slate-400 leading-tight">
-                  Tournament desk: Timer controls, rebuys, addons, bust-outs
+                  Game management: Timer controls, rebuys, addons, bust-outs
                 </p>
               </div>
 
@@ -209,7 +209,7 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
                   {role === 'scribe' && <CheckCircle2 className="w-4 h-4 text-indigo-400" />}
                 </div>
                 <p className="text-[11px] text-slate-400 leading-tight">
-                  Seating desk: Walk-in registration, bust-outs &amp; KO bounty awards
+                  Player seating: Walk-in registration, bust-outs &amp; KO bounty awards
                 </p>
               </div>
 

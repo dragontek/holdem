@@ -98,8 +98,8 @@ export const Navigation: React.FC<NavigationProps> = ({
                 </button>
                 <div className="hidden md:flex items-center gap-2 pl-2 border-l border-slate-800">
                   <span className="text-xs font-bold text-white tracking-wide uppercase">League Ops</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-black">
-                    DIRECTOR HUB
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">
+                    GAME OPS
                   </span>
                 </div>
               </div>
@@ -191,7 +191,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   }`}
                 >
                   <Clock className="w-3.5 h-3.5" /> 
-                  <span>Live Clock Desk</span>
+                  <span>Game Manager</span>
                 </button>
 
                 <button
@@ -344,7 +344,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               }`}
             >
               <Clock className="w-4 h-4" />
-              <span>Desk</span>
+              <span>Game</span>
             </button>
 
             <button

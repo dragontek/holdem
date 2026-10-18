@@ -32,9 +32,7 @@ import {
   UserPlus,
   PlayCircle,
   Clock,
-  Layers,
   ChevronRight,
-  DollarSign,
   RotateCcw
 } from 'lucide-react';
 

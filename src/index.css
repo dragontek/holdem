@@ -2,6 +2,37 @@
 
 @layer base {
   :root {
+    --background: #020617; /* slate-950 */
+    --foreground: #f8fafc; /* slate-50 */
+
+    --card: rgba(15, 23, 42, 0.75); /* slate-900 with glass opacity */
+    --card-foreground: #f8fafc;
+
+    --popover: #0f172a;
+    --popover-foreground: #f8fafc;
+
+    --primary: #f59e0b; /* amber-500 tournament gold */
+    --primary-foreground: #020617;
+
+    --secondary: #1e293b; /* slate-800 */
+    --secondary-foreground: #e2e8f0;
+
+    --muted: #1e293b;
+    --muted-foreground: #94a3b8;
+
+    --accent: #1e293b;
+    --accent-foreground: #f8fafc;
+
+    --destructive: #ef4444; /* red-500 */
+    --destructive-foreground: #f8fafc;
+
+    --border: #334155; /* slate-700 / slate-800 */
+    --input: #1e293b;
+    --ring: #f59e0b;
+
+    --radius: 0.75rem;
+
+    /* Custom poker theme accents */
     --color-felt: #0B2B1B;
     --color-gold: #D4AF37;
     --color-poker-red: #E63946;
@@ -10,25 +41,25 @@
   body {
     @apply bg-slate-950 text-slate-100 antialiased font-sans selection:bg-amber-500 selection:text-slate-950;
     background-image: 
-      radial-gradient(at 50% 0%, rgba(20, 83, 45, 0.25) 0px, transparent 75%),
-      radial-gradient(at 100% 100%, rgba(180, 83, 9, 0.15) 0px, transparent 50%);
+      radial-gradient(at 50% 0%, rgba(20, 83, 45, 0.20) 0px, transparent 70%),
+      radial-gradient(at 100% 100%, rgba(180, 83, 9, 0.12) 0px, transparent 50%);
     min-height: 100vh;
   }
 }
 
-/* Glassmorphism & Poker Aesthetic Utilities */
+/* Glassmorphism & Surface Utilities */
 .glass-panel {
-  background: rgba(15, 23, 42, 0.75);
+  background: rgba(15, 23, 42, 0.80);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .glass-card {
-  background: rgba(30, 41, 59, 0.6);
+  background: rgba(30, 41, 59, 0.65);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .gold-gradient-text {
@@ -42,11 +73,11 @@
 }
 
 .gold-glow {
-  box-shadow: 0 0 25px rgba(245, 158, 11, 0.25);
+  box-shadow: 0 0 25px rgba(245, 158, 11, 0.20);
 }
 
 .felt-glow {
-  box-shadow: 0 0 30px rgba(34, 197, 94, 0.2);
+  box-shadow: 0 0 30px rgba(34, 197, 94, 0.18);
 }
 
 /* Custom Scrollbars */

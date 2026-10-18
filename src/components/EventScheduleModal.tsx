@@ -8,10 +8,7 @@ import {
   Check, 
   AlertCircle,
   RotateCcw,
-  Clock,
-  Sparkles,
-  Layers,
-  ChevronRight
+  Sparkles
 } from 'lucide-react';
 
 interface EventScheduleModalProps {
@@ -513,7 +510,6 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
                       onClick={() => {
                         setRecurringDay(d.key);
                         if (!formData.title || formData.title.includes('Deepstack')) {
-                          const dayCap = d.label;
                           setFormData({ ...formData, title: `${d.label} Morning Deepstack` });
                         }
                       }}

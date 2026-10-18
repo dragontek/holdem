@@ -305,15 +305,18 @@ export const App: React.FC = () => {
 
         {currentView === 'admin' && (
           <AdminView
+            games={games}
             venues={venues}
             seasons={seasons}
             currentUser={currentUser}
+            onGamesChange={setGames}
             onVenuesChange={setVenues}
             onSeasonsChange={setSeasons}
             onRoleChange={(newRole: UserRole) => {
               AuthService.updateRole(newRole);
               setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));
             }}
+            onSelectGame={handleSelectGame}
             onBack={handleGoBack}
           />
         )}

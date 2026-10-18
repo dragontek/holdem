@@ -5,7 +5,6 @@ import {
   Trophy, 
   Calendar, 
   Tv, 
-  SlidersHorizontal, 
   QrCode, 
   Database,
   Building2,
@@ -42,7 +41,6 @@ export const Navigation: React.FC<NavigationProps> = ({
   seasonName,
 }) => {
   const userRole = currentUser?.role || 'player';
-  const canAccessDirector = AuthService.canAccessDirector(userRole);
   const canAccessAdmin = AuthService.canAccessAdmin(userRole);
 
   const getRoleIcon = (role: UserRole) => {
@@ -108,19 +106,6 @@ export const Navigation: React.FC<NavigationProps> = ({
             >
               <Trophy className="w-3.5 h-3.5" /> Standings
             </button>
-
-            {canAccessDirector && (
-              <button
-                onClick={() => onSelectView('director')}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  currentView === 'director'
-                    ? 'bg-emerald-500 text-slate-950 shadow-md font-bold'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-                }`}
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5" /> Director Desk
-              </button>
-            )}
 
             {canAccessAdmin && (
               <button
@@ -228,18 +213,6 @@ export const Navigation: React.FC<NavigationProps> = ({
           <Trophy className="w-5 h-5" />
           <span>Ranks</span>
         </button>
-
-        {canAccessDirector && (
-          <button
-            onClick={() => onSelectView('director')}
-            className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-xs transition-all ${
-              currentView === 'director' ? 'text-emerald-400 font-bold' : 'text-slate-400'
-            }`}
-          >
-            <SlidersHorizontal className="w-5 h-5" />
-            <span>Director</span>
-          </button>
-        )}
 
         {canAccessAdmin && (
           <button

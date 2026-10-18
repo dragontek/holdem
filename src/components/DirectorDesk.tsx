@@ -3,7 +3,6 @@ import type { Game, GameEntry, Player, Venue, Season, UserRole } from '../types/
 import { AppwriteService } from '../services/appwriteService';
 import { AuthService } from '../services/authService';
 import { PlayerSeatingModal } from './PlayerSeatingModal';
-import { EventScheduleModal } from './EventScheduleModal';
 import { 
   Play, 
   Pause, 
@@ -20,8 +19,6 @@ import {
   UserPlus,
   Sparkles,
   Award,
-  Calendar,
-  Edit3,
   Trophy,
   ArrowLeft
 } from 'lucide-react';
@@ -30,14 +27,14 @@ interface DirectorDeskProps {
   activeGame: Game;
   gameEntries: GameEntry[];
   players: Player[];
-  venues: Venue[];
-  seasons: Season[];
-  allGames: Game[];
+  venues?: Venue[];
+  seasons?: Season[];
+  allGames?: Game[];
   userRole?: UserRole;
   onUpdateGame: (updatedGame: Game) => void;
   onEliminatePlayer: (entryId: string, koByPlayerId?: string) => void;
-  onSelectGame: (game: Game) => void;
-  onGamesChange: (games: Game[]) => void;
+  onSelectGame?: (game: Game) => void;
+  onGamesChange?: (games: Game[]) => void;
   onEntriesChange: (entries: GameEntry[]) => void;
   onBack?: () => void;
   onSelectPlayer?: (player: Player) => void;
@@ -47,9 +44,9 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   activeGame,
   gameEntries,
   players,
-  venues,
-  seasons,
-  allGames,
+  venues = [],
+  seasons = [],
+  allGames = [],
   userRole = 'manager',
   onUpdateGame,
   onEliminatePlayer,
@@ -59,8 +56,6 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   onBack,
   onSelectPlayer,
 }) => {
-  const [activeTab, setActiveTab] = useState<'live' | 'schedules'>('live');
-
   // Clock state
   const [isRunning, setIsRunning] = useState<boolean>(activeGame.status === 'running');
   const [currentLevelIndex, setCurrentLevelIndex] = useState<number>(activeGame.currentLevelIndex);
@@ -71,8 +66,6 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   const [selectedEntryToEliminate, setSelectedEntryToEliminate] = useState<GameEntry | null>(null);
   const [koWinnerPlayerId, setKoWinnerPlayerId] = useState<string>('');
   const [isSeatingModalOpen, setIsSeatingModalOpen] = useState<boolean>(false);
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
-  const [gameToEdit, setGameToEdit] = useState<Game | null>(null);
   const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
   const [finalSuccessMsg, setFinalSuccessMsg] = useState<string>('');
 
@@ -80,7 +73,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   const nextLevel = activeGame.blindSchedule[currentLevelIndex + 1];
 
   const canManageClock = AuthService.canManageClock(userRole);
-  const canScheduleGames = AuthService.canScheduleGames(userRole);
+  const canFinalizeTournament = AuthService.canAccessAdmin(userRole);
 
   // Sync clock if activeGame changes
   useEffect(() => {
@@ -352,7 +345,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
         </button>
       )}
 
-      {/* 1. Director Header & Tab Switcher */}
+      {/* 1. Director Header */}
       <div className="glass-panel rounded-2xl p-5 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -364,29 +357,20 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
           <h1 className="text-2xl font-black text-white mt-1">{activeGame.title}</h1>
         </div>
 
-        {/* Manager Mode Tabs */}
-        <div className="flex items-center bg-slate-900/90 p-1.5 rounded-xl border border-slate-800">
-          <button
-            onClick={() => setActiveTab('live')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-              activeTab === 'live'
-                ? 'bg-emerald-500 text-slate-950 shadow-md'
-                : 'text-slate-400 hover:text-white'
+        {/* Live Status Badge */}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-400">Status:</span>
+          <span
+            className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${
+              activeGame.status === 'running'
+                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 animate-pulse'
+                : activeGame.status === 'completed'
+                ? 'bg-slate-800 text-slate-400 border-slate-700'
+                : 'bg-amber-500/20 text-amber-400 border-amber-500/40'
             }`}
           >
-            <Play className="w-3.5 h-3.5" /> Live Tournament
-          </button>
-
-          <button
-            onClick={() => setActiveTab('schedules')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-              activeTab === 'schedules'
-                ? 'bg-amber-500 text-slate-950 shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Calendar className="w-3.5 h-3.5" /> Event Schedules
-          </button>
+            {activeGame.status === 'running' ? '● In Progress' : activeGame.status}
+          </span>
         </div>
       </div>
 
@@ -397,11 +381,8 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* TAB 1: LIVE TOURNAMENT CONTROL DESK                      */}
-      {/* ======================================================== */}
-      {activeTab === 'live' && (
-        <div className="space-y-6">
+      {/* Live Tournament Cockpit */}
+      <div className="space-y-6">
           
           {/* Interactive Blind Clock Console */}
           <div className="glass-card rounded-2xl p-6 border border-slate-800 space-y-6">
@@ -520,7 +501,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                 >
                   <UserPlus className="w-4 h-4" /> Seat Player
                 </button>
-                {canScheduleGames && (
+                {canFinalizeTournament && (
                   <button
                     onClick={handleFinalizeTournament}
                     disabled={isFinalizing || activeGame.status === 'completed'}
@@ -662,108 +643,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
               </div>
             </div>
           </div>
-
         </div>
-      )}
-
-      {/* ======================================================== */}
-      {/* TAB 2: TOURNAMENT EVENT SCHEDULES                        */}
-      {/* ======================================================== */}
-      {activeTab === 'schedules' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-black text-white">Event Schedules &amp; Calendar</h2>
-              <p className="text-xs text-slate-400">Manage poker tournaments across the league season</p>
-            </div>
-
-            {canScheduleGames && (
-              <button
-                onClick={() => {
-                  setGameToEdit(null);
-                  setIsScheduleModalOpen(true);
-                }}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
-              >
-                <Plus className="w-4 h-4" /> Schedule Tournament
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {allGames.map((game) => (
-              <div
-                key={game.$id}
-                className={`p-5 rounded-2xl border transition-all ${
-                  game.$id === activeGame.$id
-                    ? 'glass-panel border-emerald-500/50 shadow-lg'
-                    : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-2 py-0.5 text-[10px] font-extrabold uppercase rounded-full border ${
-                          game.status === 'running'
-                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 animate-pulse'
-                            : game.status === 'completed'
-                            ? 'bg-slate-800 text-slate-400 border-slate-700'
-                            : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                        }`}
-                      >
-                        {game.status}
-                      </span>
-                      <span className="text-xs text-slate-400">{game.venueName}</span>
-                    </div>
-                    <h3 className="text-lg font-bold text-white mt-1">{game.title}</h3>
-                    <p className="text-xs text-slate-400 mt-0.5">{game.scheduledAt}</p>
-                  </div>
-
-                  <div className="text-right">
-                    <span className="text-xs text-slate-400 block">Buy-in</span>
-                    <span className="text-lg font-black text-emerald-400">${game.buyinAmount}</span>
-                  </div>
-                </div>
-
-                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-                  <div>
-                    {game.totalPlayersCount} Players • {game.startingChips.toLocaleString()} Chips
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {canScheduleGames && (
-                      <button
-                        onClick={() => {
-                          setGameToEdit(game);
-                          setIsScheduleModalOpen(true);
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center gap-1 border border-slate-700"
-                      >
-                        <Edit3 className="w-3.5 h-3.5 text-amber-400" /> Edit
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => {
-                        onSelectGame(game);
-                        setActiveTab('live');
-                      }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
-                        game.$id === activeGame.$id
-                          ? 'bg-emerald-500 text-slate-950'
-                          : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30'
-                      }`}
-                    >
-                      {game.$id === activeGame.$id ? 'Active Desk' : 'Open in Desk'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ======================================================== */}
       {/* MODALS                                                   */}
@@ -776,35 +656,6 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
         availablePlayers={players}
         currentEntries={gameEntries}
         onConfirmSeat={handleSeatPlayer}
-      />
-
-      {/* 2. Event Schedule Modal */}
-      <EventScheduleModal
-        isOpen={isScheduleModalOpen}
-        onClose={() => {
-          setIsScheduleModalOpen(false);
-          setGameToEdit(null);
-        }}
-        gameToEdit={gameToEdit}
-        venues={venues}
-        seasons={seasons}
-        onGameSaved={(savedGame) => {
-          if (gameToEdit) {
-            onGamesChange(allGames.map((g) => (g.$id === savedGame.$id ? savedGame : g)));
-            if (activeGame.$id === savedGame.$id) {
-              onUpdateGame(savedGame);
-            }
-          } else {
-            onGamesChange([savedGame, ...allGames]);
-          }
-        }}
-        onGameDeleted={(deletedId) => {
-          onGamesChange(allGames.filter((g) => g.$id !== deletedId));
-          if (activeGame.$id === deletedId && allGames.length > 1) {
-            const fallback = allGames.find((g) => g.$id !== deletedId);
-            if (fallback) onSelectGame(fallback);
-          }
-        }}
       />
 
       {/* 3. Elimination Modal */}

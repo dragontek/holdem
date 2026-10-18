@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import type { Game, Venue, UserProfile, UserRole, Season, TournamentEvent } from '@/types/holdem';
+import type { Game, Venue, UserProfile, UserRole, Season, TournamentEvent, League } from '@/types/holdem';
 import { AppwriteService } from '@/services/appwriteService';
 import { AuthService } from '@/services/authService';
 import { EventScheduleModal } from './EventScheduleModal';
 import { VenueManagerModal } from './VenueManagerModal';
 import { SeasonManagerModal } from './SeasonManagerModal';
 import { UserInviteModal } from './UserInviteModal';
+import { LeagueManagerModal } from './LeagueManagerModal';
+import { AdminLeaguesSection } from './admin/AdminLeaguesSection';
 import { AdminSeasonsSection } from './admin/AdminSeasonsSection';
 import { AdminVenuesSection } from './admin/AdminVenuesSection';
 import { AdminSchedulesSection } from './admin/AdminSchedulesSection';
@@ -29,18 +31,20 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 
-export type AdminTab = 'flow' | 'seasons' | 'venues' | 'schedules' | 'users' | 'rbac';
+export type AdminTab = 'leagues' | 'flow' | 'seasons' | 'venues' | 'schedules' | 'users' | 'rbac';
 
 interface AdminViewProps {
   games: Game[];
   venues: Venue[];
   seasons: Season[];
   events?: TournamentEvent[];
+  leagues?: League[];
   currentUser: UserProfile | null;
   onGamesChange: (games: Game[]) => void;
   onVenuesChange: (venues: Venue[]) => void;
   onSeasonsChange: (seasons: Season[]) => void;
   onEventsChange?: (events: TournamentEvent[]) => void;
+  onLeaguesChange?: (leagues: League[]) => void;
   onRoleChange: (role: UserRole) => void;
   onSelectGame?: (game: Game) => void;
   onBack?: () => void;
@@ -52,19 +56,22 @@ export const AdminView: React.FC<AdminViewProps> = ({
   venues,
   seasons,
   events = [],
+  leagues: initialLeagues = [],
   currentUser,
   onGamesChange,
   onVenuesChange,
   onSeasonsChange,
   onEventsChange: _onEventsChange,
+  onLeaguesChange,
   onRoleChange,
   onSelectGame,
   onBack,
   backLabel = 'Back to Games',
 }) => {
+  const isAdmin = currentUser?.role === 'admin';
 
-  // Default to the full top-to-bottom setup workflow (Seasons -> Venues -> Schedules)
-  const [activeTab, setActiveTab] = useState<AdminTab>('flow');
+  // Default to leagues tab for platform administrators, or full flow for league managers
+  const [activeTab, setActiveTab] = useState<AdminTab>(isAdmin ? 'leagues' : 'flow');
 
   // Modals state
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
@@ -72,6 +79,17 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [isVenueModalOpen, setIsVenueModalOpen] = useState(false);
   const [isSeasonModalOpen, setIsSeasonModalOpen] = useState(false);
   const [isInviteUserOpen, setIsInviteUserOpen] = useState(false);
+  const [isLeagueModalOpen, setIsLeagueModalOpen] = useState(false);
+  const [leagueToEdit, setLeagueToEdit] = useState<League | null>(null);
+
+  // Leagues state
+  const [leagues, setLeagues] = useState<League[]>(initialLeagues);
+
+  useEffect(() => {
+    if (!initialLeagues || initialLeagues.length === 0) {
+      AppwriteService.getLeagues().then(setLeagues);
+    }
+  }, [initialLeagues]);
 
   // Feedback notifications
   const [successMsg, setSuccessMsg] = useState('');
@@ -106,6 +124,40 @@ export const AdminView: React.FC<AdminViewProps> = ({
     const updated = await AppwriteService.setActiveSeason(seasonId, seasons);
     onSeasonsChange(updated);
     setSuccessMsg('Active season updated.');
+    setTimeout(() => setSuccessMsg(''), 4000);
+  };
+
+  const handleQuickAssignManager = async (
+    leagueId: string,
+    manager: { id: string; name: string; email: string }
+  ) => {
+    await AppwriteService.assignLeagueManager(leagueId, manager);
+    const updated = leagues.map((l) =>
+      l.$id === leagueId
+        ? { ...l, managerId: manager.id, managerName: manager.name, managerEmail: manager.email }
+        : l
+    );
+    setLeagues(updated);
+    if (onLeaguesChange) onLeaguesChange(updated);
+
+    const targetUser = users.find((u) => u.$id === manager.id);
+    if (targetUser && targetUser.role !== 'manager' && targetUser.role !== 'admin') {
+      const updatedUsers = await AuthService.updateUserRole(manager.id, 'manager', currentUser);
+      setUsers(updatedUsers);
+    }
+
+    setSuccessMsg(`Designated ${manager.name} as League Manager.`);
+    setTimeout(() => setSuccessMsg(''), 4000);
+  };
+
+  const handleLeagueSaved = (savedLeague: League) => {
+    const exists = leagues.some((l) => l.$id === savedLeague.$id);
+    const updated = exists
+      ? leagues.map((l) => (l.$id === savedLeague.$id ? savedLeague : l))
+      : [savedLeague, ...leagues];
+    setLeagues(updated);
+    if (onLeaguesChange) onLeaguesChange(updated);
+    setSuccessMsg(`Configured League "${savedLeague.name}" with manager ${savedLeague.managerName || 'assigned'}.`);
     setTimeout(() => setSuccessMsg(''), 4000);
   };
 
@@ -235,6 +287,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
           {/* Quick Contextual Create Action */}
           <div className="flex items-center gap-2 w-full md:w-auto">
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="default"
+                onClick={() => {
+                  setLeagueToEdit(null);
+                  setIsLeagueModalOpen(true);
+                }}
+                className="w-full md:w-auto border-rose-500/30 text-rose-300 hover:bg-rose-500/10"
+              >
+                <Plus className="w-4 h-4" /> Create League
+              </Button>
+            )}
             <Button
               variant="default"
               size="default"
@@ -250,7 +315,21 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </div>
 
         {/* Executive KPI Stats Bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-slate-800/80">
+        <div className={`grid grid-cols-2 ${isAdmin ? 'sm:grid-cols-5' : 'sm:grid-cols-4'} gap-3 pt-4 border-t border-slate-800/80`}>
+          {isAdmin && (
+            <div 
+              onClick={() => setActiveTab('leagues')}
+              className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                activeTab === 'leagues' ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1.5">
+                <Trophy className="w-3.5 h-3.5 text-rose-400" /> 0. Leagues
+              </div>
+              <div className="text-base font-black text-rose-300 mt-1 truncate">{leagues.length} Leagues</div>
+              <span className="text-[10px] text-slate-500 mt-0.5 block">Governance &amp; Managers</span>
+            </div>
+          )}
           <div 
             onClick={() => setActiveTab('seasons')}
             className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
@@ -315,6 +394,23 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
       {/* 2. Sleek Segmented Admin Tab Navigation Bar */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none border-b border-slate-800">
+        {isAdmin && (
+          <Button
+            variant={activeTab === 'leagues' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setActiveTab('leagues')}
+            className={`text-xs whitespace-nowrap h-9 ${
+              activeTab === 'leagues' ? 'bg-rose-500 text-white hover:bg-rose-400' : 'text-rose-400/90'
+            }`}
+          >
+            <Trophy className="w-4 h-4" />
+            <span>0. Platform Leagues</span>
+            <Badge variant="secondary" className="text-[9px] px-1.5 py-0 ml-1">
+              {leagues.length}
+            </Badge>
+          </Button>
+        )}
+
         <Button
           variant={activeTab === 'flow' ? 'default' : 'outline'}
           size="sm"
@@ -392,6 +488,23 @@ export const AdminView: React.FC<AdminViewProps> = ({
       </div>
 
       {/* 3. TAB / FLOW CONTENT VIEWS */}
+
+      {/* 0. PLATFORM LEAGUES SECTION (FOR ADMINS) */}
+      {activeTab === 'leagues' && (
+        <AdminLeaguesSection
+          leagues={leagues}
+          users={users}
+          onOpenCreateLeague={() => {
+            setLeagueToEdit(null);
+            setIsLeagueModalOpen(true);
+          }}
+          onEditLeague={(league) => {
+            setLeagueToEdit(league);
+            setIsLeagueModalOpen(true);
+          }}
+          onQuickAssignManager={handleQuickAssignManager}
+        />
+      )}
 
       {/* FULL TOP-TO-BOTTOM SETUP FLOW */}
       {activeTab === 'flow' && (
@@ -580,6 +693,18 @@ export const AdminView: React.FC<AdminViewProps> = ({
         isOpen={isInviteUserOpen}
         onClose={() => setIsInviteUserOpen(false)}
         onUserCreated={handleUserCreated}
+      />
+
+      {/* League Manager Modal */}
+      <LeagueManagerModal
+        isOpen={isLeagueModalOpen}
+        onClose={() => {
+          setIsLeagueModalOpen(false);
+          setLeagueToEdit(null);
+        }}
+        leagueToEdit={leagueToEdit}
+        users={users}
+        onLeagueSaved={handleLeagueSaved}
       />
 
     </div>

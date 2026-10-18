@@ -24,7 +24,8 @@ import type {
   GameEntry,
   UserProfile,
   UserRole,
-  TournamentEvent
+  TournamentEvent,
+  League
 } from './types/holdem';
 
 export const App: React.FC = () => {
@@ -36,6 +37,7 @@ export const App: React.FC = () => {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
+  const [leagues, setLeagues] = useState<League[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [hotHand, setHotHand] = useState<HotHandJackpot | null>(null);
   
@@ -57,7 +59,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     async function loadData() {
       try {
-        const [gList, vList, pList, sList, aList, hJackpot, user, eList] = await Promise.all([
+        const [gList, vList, pList, sList, aList, hJackpot, user, eList, lList] = await Promise.all([
           AppwriteService.getGames(),
           AppwriteService.getVenues(),
           AppwriteService.getPlayers(),
@@ -66,6 +68,7 @@ export const App: React.FC = () => {
           AppwriteService.getHotHandJackpot(),
           AuthService.getCurrentUser(),
           AppwriteService.getEvents(),
+          AppwriteService.getLeagues(),
         ]);
 
         setGames(gList);
@@ -73,6 +76,7 @@ export const App: React.FC = () => {
         setVenues(vList);
         setPlayers(pList);
         setSeasons(sList);
+        setLeagues(lList);
         setAnnouncements(aList);
         setHotHand(hJackpot);
         setCurrentUser(user);
@@ -315,11 +319,13 @@ export const App: React.FC = () => {
             venues={venues}
             seasons={seasons}
             events={events}
+            leagues={leagues}
             currentUser={currentUser}
             onGamesChange={setGames}
             onVenuesChange={setVenues}
             onSeasonsChange={setSeasons}
             onEventsChange={setEvents}
+            onLeaguesChange={setLeagues}
             onRoleChange={(newRole: UserRole) => {
               AuthService.updateRole(newRole);
               setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));

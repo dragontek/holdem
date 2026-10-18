@@ -8,10 +8,23 @@ const LOCAL_STORAGE_ALL_USERS_KEY = 'holdem_all_users';
 export const INITIAL_LEAGUE_USERS: UserProfile[] = mockUsers;
 
 export const DEMO_USERS: Record<UserRole, UserProfile> = {
-  manager: INITIAL_LEAGUE_USERS.find((u) => u.role === 'manager') || INITIAL_LEAGUE_USERS[9],
-  dealer: INITIAL_LEAGUE_USERS.find((u) => u.role === 'dealer') || INITIAL_LEAGUE_USERS[10],
-  scribe: INITIAL_LEAGUE_USERS.find((u) => u.role === 'scribe') || INITIAL_LEAGUE_USERS[11],
-  player: INITIAL_LEAGUE_USERS.find((u) => u.role === 'player') || INITIAL_LEAGUE_USERS[0],
+  admin: INITIAL_LEAGUE_USERS.find((u) => u.role === 'admin') || {
+    $id: 'user_admin',
+    name: 'Platform Admin',
+    email: 'admin@holdempro.com',
+    role: 'admin',
+    suitIcon: 'spades',
+    isMember: true,
+    totalPoints: 1000000,
+    careerWins: 10,
+    careerKOs: 150,
+    gamesPlayed: 50,
+    leagueId: 'league_1',
+  },
+  manager: INITIAL_LEAGUE_USERS.find((u) => u.role === 'manager') || INITIAL_LEAGUE_USERS[10],
+  dealer: INITIAL_LEAGUE_USERS.find((u) => u.role === 'dealer') || INITIAL_LEAGUE_USERS[11],
+  scribe: INITIAL_LEAGUE_USERS.find((u) => u.role === 'scribe') || INITIAL_LEAGUE_USERS[12],
+  player: INITIAL_LEAGUE_USERS.find((u) => u.role === 'player') || INITIAL_LEAGUE_USERS[1],
 };
 
 
@@ -306,7 +319,8 @@ export class AuthService {
    */
   private static detectRoleFromEmail(email: string): UserRole {
     const lower = email.toLowerCase();
-    if (lower.includes('manager') || lower.includes('director') || lower.includes('admin')) return 'manager';
+    if (lower.includes('admin') || lower.includes('architect') || lower.includes('root')) return 'admin';
+    if (lower.includes('manager') || lower.includes('director')) return 'manager';
     if (lower.includes('dealer')) return 'dealer';
     if (lower.includes('scribe')) return 'scribe';
     return 'player';
@@ -316,27 +330,39 @@ export class AuthService {
   // --- ROLE-BASED ACCESS CONTROL HELPERS ---
   // ==========================================
 
+  static canAccessPlatformAdmin(role?: UserRole): boolean {
+    return role === 'admin';
+  }
+
+  static canCreateLeague(role?: UserRole): boolean {
+    return role === 'admin';
+  }
+
+  static canAssignLeagueManager(role?: UserRole): boolean {
+    return role === 'admin';
+  }
+
   static canAccessAdmin(role?: UserRole): boolean {
-    return role === 'manager';
+    return role === 'admin' || role === 'manager';
   }
 
   static canAccessDirector(role?: UserRole): boolean {
-    return role === 'manager' || role === 'dealer' || role === 'scribe';
+    return role === 'admin' || role === 'manager' || role === 'dealer' || role === 'scribe';
   }
 
   static canManageClock(role?: UserRole): boolean {
-    return role === 'manager' || role === 'dealer';
+    return role === 'admin' || role === 'manager' || role === 'dealer';
   }
 
   static canManageVenues(role?: UserRole): boolean {
-    return role === 'manager';
+    return role === 'admin' || role === 'manager';
   }
 
   static canScheduleGames(role?: UserRole): boolean {
-    return role === 'manager';
+    return role === 'admin' || role === 'manager';
   }
 
   static canRecordBusts(role?: UserRole): boolean {
-    return role === 'manager' || role === 'dealer' || role === 'scribe';
+    return role === 'admin' || role === 'manager' || role === 'dealer' || role === 'scribe';
   }
 }

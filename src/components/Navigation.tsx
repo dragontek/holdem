@@ -45,6 +45,8 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   const getRoleIcon = (role: UserRole) => {
     switch (role) {
+      case 'admin':
+        return <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />;
       case 'manager':
         return <Crown className="w-3.5 h-3.5 text-amber-400" />;
       case 'dealer':

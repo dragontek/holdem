@@ -26,9 +26,9 @@ export const AdminRBACSection: React.FC<AdminRBACSectionProps> = ({
         </div>
 
         {/* Quick Role Tester Switcher */}
-        <div className="flex items-center gap-1.5 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-          <span className="text-[10px] text-slate-400 font-bold uppercase px-2">Simulate Role:</span>
-          {(['manager', 'dealer', 'scribe', 'player'] as const).map((r) => {
+        <div className="flex items-center gap-1.5 bg-slate-900 p-1.5 rounded-xl border border-slate-800 overflow-x-auto">
+          <span className="text-[10px] text-slate-400 font-bold uppercase px-2 shrink-0">Simulate Role:</span>
+          {(['admin', 'manager', 'dealer', 'scribe', 'player'] as const).map((r) => {
             const isCurrent = currentUser?.role === r;
             return (
               <Button
@@ -37,7 +37,11 @@ export const AdminRBACSection: React.FC<AdminRBACSectionProps> = ({
                 size="sm"
                 onClick={() => onQuickRoleSwitch(r)}
                 className={`h-7 px-2.5 text-xs font-bold ${
-                  isCurrent ? 'bg-amber-500 text-slate-950' : 'text-slate-400'
+                  isCurrent 
+                    ? r === 'admin' 
+                      ? 'bg-rose-500 text-white' 
+                      : 'bg-amber-500 text-slate-950' 
+                    : 'text-slate-400'
                 }`}
               >
                 {r.toUpperCase()}
@@ -55,22 +59,33 @@ export const AdminRBACSection: React.FC<AdminRBACSectionProps> = ({
             <thead>
               <tr className="border-b border-slate-800 text-slate-400">
                 <th className="py-2.5 px-3">System Capability</th>
-                <th className="py-2.5 px-3">Manager</th>
-                <th className="py-2.5 px-3">Dealer</th>
-                <th className="py-2.5 px-3">Scribe</th>
+                <th className="py-2.5 px-3 text-rose-400 font-bold">Admin</th>
+                <th className="py-2.5 px-3 text-amber-400 font-bold">Manager</th>
+                <th className="py-2.5 px-3 text-emerald-400 font-bold">Dealer</th>
+                <th className="py-2.5 px-3 text-indigo-400 font-bold">Scribe</th>
                 <th className="py-2.5 px-3">Player</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               <tr>
-                <td className="py-2.5 px-3 font-semibold text-white">Full League Admin &amp; CRUD (Seasons, Venues, Users)</td>
+                <td className="py-2.5 px-3 font-semibold text-white">Create Leagues &amp; Assign League Managers</td>
+                <td className="py-2.5 px-3 text-rose-400 font-bold">✓ Full</td>
+                <td className="py-2.5 px-3 text-slate-500">✗ None</td>
+                <td className="py-2.5 px-3 text-slate-500">✗ None</td>
+                <td className="py-2.5 px-3 text-slate-500">✗ None</td>
+                <td className="py-2.5 px-3 text-slate-500">✗ None</td>
+              </tr>
+              <tr>
+                <td className="py-2.5 px-3 font-semibold text-white">Configure Seasons &amp; Host Venues</td>
+                <td className="py-2.5 px-3 text-rose-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-slate-500">✗ None</td>
                 <td className="py-2.5 px-3 text-slate-500">✗ None</td>
                 <td className="py-2.5 px-3 text-slate-500">✗ None</td>
               </tr>
               <tr>
-                <td className="py-2.5 px-3 font-semibold text-white">Schedule Tournaments</td>
+                <td className="py-2.5 px-3 font-semibold text-white">Schedule Tournaments &amp; Series</td>
+                <td className="py-2.5 px-3 text-rose-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-slate-500">✗ None</td>
                 <td className="py-2.5 px-3 text-slate-500">✗ None</td>
@@ -78,6 +93,7 @@ export const AdminRBACSection: React.FC<AdminRBACSectionProps> = ({
               </tr>
               <tr>
                 <td className="py-2.5 px-3 font-semibold text-white">Director Desk Access (Live Tournament Operator)</td>
+                <td className="py-2.5 px-3 text-rose-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
@@ -85,6 +101,7 @@ export const AdminRBACSection: React.FC<AdminRBACSectionProps> = ({
               </tr>
               <tr>
                 <td className="py-2.5 px-3 font-semibold text-white">Manage Blind Clock &amp; Levels</td>
+                <td className="py-2.5 px-3 text-rose-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-slate-500">✗ View Only</td>
@@ -92,6 +109,7 @@ export const AdminRBACSection: React.FC<AdminRBACSectionProps> = ({
               </tr>
               <tr>
                 <td className="py-2.5 px-3 font-semibold text-white">Seat Walk-In Players &amp; Add Chips</td>
+                <td className="py-2.5 px-3 text-rose-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
@@ -99,6 +117,7 @@ export const AdminRBACSection: React.FC<AdminRBACSectionProps> = ({
               </tr>
               <tr>
                 <td className="py-2.5 px-3 font-semibold text-white">Record Bust-outs &amp; Assign KO Bounties</td>
+                <td className="py-2.5 px-3 text-rose-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>
                 <td className="py-2.5 px-3 text-emerald-400 font-bold">✓ Full</td>

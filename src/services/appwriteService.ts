@@ -1,6 +1,7 @@
 import { databases, tablesDb, isAppwriteConfigured, DATABASE_ID, APPWRITE_TABLES, APPWRITE_COLLECTIONS, ID } from '../lib/appwrite';
 import { 
   mockLeague, 
+  mockLeagues,
   mockSeasons, 
   mockVenues, 
   mockPlayers, 
@@ -12,21 +13,102 @@ import {
 } from './mockData';
 import type { League, Season, Venue, Player, Game, GameEntry, Announcement, HotHandJackpot, TournamentEvent } from '../types/holdem';
 
+const LOCAL_STORAGE_LEAGUES_KEY = 'holdem_leagues';
+
 export class AppwriteService {
-  // Fetch League Details
-  static async getLeague(): Promise<League> {
-    if (!isAppwriteConfigured) return mockLeague;
-    try {
-      const response = await tablesDb.getRow(DATABASE_ID, APPWRITE_TABLES.LEAGUES, mockLeague.$id);
-      return response as unknown as League;
-    } catch {
+  // Fetch All Platform Leagues
+  static async getLeagues(): Promise<League[]> {
+    if (isAppwriteConfigured) {
       try {
-        const response = await databases.getDocument(DATABASE_ID, APPWRITE_COLLECTIONS.LEAGUES, mockLeague.$id);
-        return response as unknown as League;
+        const response = await tablesDb.listRows(DATABASE_ID, APPWRITE_TABLES.LEAGUES);
+        const items = (response as any).rows || (response as any).documents || [];
+        if (items.length > 0) return items as unknown as League[];
       } catch {
-        return mockLeague;
+        try {
+          const response = await databases.listDocuments(DATABASE_ID, APPWRITE_COLLECTIONS.LEAGUES);
+          if (response.documents.length > 0) return response.documents as unknown as League[];
+        } catch {}
       }
     }
+
+    const cached = localStorage.getItem(LOCAL_STORAGE_LEAGUES_KEY);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {}
+    }
+
+    localStorage.setItem(LOCAL_STORAGE_LEAGUES_KEY, JSON.stringify(mockLeagues));
+    return mockLeagues;
+  }
+
+  // Fetch League Details (by ID or default)
+  static async getLeague(leagueId?: string): Promise<League> {
+    const leagues = await this.getLeagues();
+    if (leagueId) {
+      const found = leagues.find((l) => l.$id === leagueId);
+      if (found) return found;
+    }
+    return leagues[0] || mockLeague;
+  }
+
+  // Create New League (Platform Admin capability)
+  static async createLeague(leagueData: Omit<League, '$id' | 'createdAt'>): Promise<League> {
+    const newLeague: League = {
+      ...leagueData,
+      $id: `league_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    };
+
+    if (isAppwriteConfigured) {
+      try {
+        await tablesDb.createRow(DATABASE_ID, APPWRITE_TABLES.LEAGUES, newLeague.$id, newLeague as any);
+      } catch {
+        try {
+          await databases.createDocument(DATABASE_ID, APPWRITE_COLLECTIONS.LEAGUES, newLeague.$id, newLeague as any);
+        } catch (e) {
+          console.warn('Appwrite createLeague failed, using local storage fallback', e);
+        }
+      }
+    }
+
+    const leagues = await this.getLeagues();
+    const updated = [newLeague, ...leagues.filter((l) => l.$id !== newLeague.$id)];
+    localStorage.setItem(LOCAL_STORAGE_LEAGUES_KEY, JSON.stringify(updated));
+    return newLeague;
+  }
+
+  // Update League Information & Manager Assignment
+  static async updateLeague(leagueId: string, updates: Partial<League>): Promise<boolean> {
+    if (isAppwriteConfigured) {
+      try {
+        await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.LEAGUES, leagueId, updates as any);
+      } catch {
+        try {
+          await databases.updateDocument(DATABASE_ID, APPWRITE_COLLECTIONS.LEAGUES, leagueId, updates as any);
+        } catch (e) {
+          console.warn('Appwrite updateLeague failed, using local storage fallback', e);
+        }
+      }
+    }
+
+    const leagues = await this.getLeagues();
+    const updated = leagues.map((l) => (l.$id === leagueId ? { ...l, ...updates } : l));
+    localStorage.setItem(LOCAL_STORAGE_LEAGUES_KEY, JSON.stringify(updated));
+    return true;
+  }
+
+  // Assign or Reassign League Manager
+  static async assignLeagueManager(
+    leagueId: string,
+    manager: { id: string; name: string; email: string }
+  ): Promise<boolean> {
+    return this.updateLeague(leagueId, {
+      managerId: manager.id,
+      managerName: manager.name,
+      managerEmail: manager.email,
+    });
   }
 
   // Fetch Active & Historical Seasons

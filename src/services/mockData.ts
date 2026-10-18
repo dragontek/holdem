@@ -5,8 +5,25 @@ export const mockLeague: League = {
   name: 'Lynkoid Hold\'em League',
   description: 'Premier Colorado Springs Texas Hold\'em Tournament League',
   ownerId: 'user_admin',
+  managerId: 'user_1',
+  managerName: 'Sarah Connor',
+  managerEmail: 'manager@holdempro.com',
   createdAt: '2026-01-01T00:00:00Z',
 };
+
+export const mockLeagues: League[] = [
+  mockLeague,
+  {
+    $id: 'league_2',
+    name: 'Mile High Poker Circuit',
+    description: 'Denver Metro competitive no-limit championship series',
+    ownerId: 'user_admin',
+    managerId: 'user_2',
+    managerName: 'Johnny Chan',
+    managerEmail: 'dealer@holdempro.com',
+    createdAt: '2026-02-15T00:00:00Z',
+  },
+];
 
 export const mockSeasons: Season[] = [
   {
@@ -75,6 +92,20 @@ export const mockHotHandJackpot: HotHandJackpot = {
  * Native Appwrite Users (Each player has an account with roles & tournament statistics)
  */
 export const mockPlayers: Player[] = [
+  {
+    $id: 'user_admin',
+    leagueId: 'league_1',
+    name: 'Platform Admin',
+    email: 'admin@holdempro.com',
+    role: 'admin',
+    nickname: 'The Architect',
+    suitIcon: 'spades',
+    isMember: true,
+    totalPoints: 1000000,
+    careerWins: 10,
+    careerKOs: 150,
+    gamesPlayed: 50,
+  },
   {
     $id: 'p_ced',
     leagueId: 'league_1',

@@ -73,7 +73,7 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-          {(['all', 'manager', 'dealer', 'scribe', 'player'] as const).map((r) => {
+          {(['all', 'admin', 'manager', 'dealer', 'scribe', 'player'] as const).map((r) => {
             const count = r === 'all' ? users.length : users.filter((u) => u.role === r).length;
             const isSelected = selectedRoleFilter === r;
             return (
@@ -125,6 +125,7 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
                     onChange={(e) => onChangeUserRole(user.$id, e.target.value as UserRole)}
                     className="bg-slate-950 text-xs font-bold text-amber-400 border border-slate-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500"
                   >
+                    <option value="admin">🛡️ Admin</option>
                     <option value="manager">👑 Manager</option>
                     <option value="dealer">💼 Dealer</option>
                     <option value="scribe">✍️ Scribe</option>

@@ -104,6 +104,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
+      case 'admin':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+            <ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> Platform Admin
+          </span>
+        );
       case 'manager':
         return (
           <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
@@ -170,6 +176,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               <div className="text-xs text-slate-300 pt-2 border-t border-slate-800/80">
+                {currentUser.role === 'admin' && (
+                  <p className="text-rose-400/90">
+                    Platform Administrator: Create leagues, assign designated League Managers, and oversee all league operations.
+                  </p>
+                )}
                 {currentUser.role === 'manager' && (
                   <p className="text-amber-400/90">
                     Full Manager Privileges: Admin section, Venue CRUD, Tournament creation, Clock &amp; Payouts.
@@ -198,7 +209,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block">
                 Quick Role Switcher (Testing):
               </span>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <button
+                  onClick={() => handleDemoSwitch('admin')}
+                  className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold text-left flex items-center gap-1.5"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" /> Super Admin
+                </button>
                 <button
                   onClick={() => handleDemoSwitch('manager')}
                   className="p-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold text-left flex items-center gap-1.5"
@@ -382,7 +399,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <option value="player">Player (League Member)</option>
                     <option value="scribe">Scribe (Check-in &amp; Bust-outs)</option>
                     <option value="dealer">Dealer (Live Clock &amp; Tables)</option>
-                    <option value="manager">Manager (Full League Admin)</option>
+                    <option value="manager">Manager (League Admin)</option>
+                    <option value="admin">Admin (Platform Super Administrator)</option>
                   </select>
                 </div>
 
@@ -405,7 +423,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDemoSwitch('admin')}
+                  className="p-2 rounded-xl glass-card text-rose-300 hover:bg-slate-800 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> Demo Admin
+                </button>
                 <button
                   type="button"
                   onClick={() => handleDemoSwitch('manager')}

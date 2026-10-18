@@ -1,10 +1,10 @@
 export type GameStatus = 'scheduled' | 'running' | 'paused' | 'completed' | 'canceled';
 export type SuitIcon = 'hearts' | 'diamonds' | 'spades' | 'clubs';
-export type UserRole = 'manager' | 'dealer' | 'scribe' | 'player';
+export type UserRole = 'admin' | 'manager' | 'dealer' | 'scribe' | 'player';
 
 /**
  * 1. League
- * Has one or more Seasons and one or more Venues.
+ * Has one or more Seasons and one or more Venues. Configured by an assigned League Manager.
  */
 export interface League {
   $id: string;
@@ -12,6 +12,9 @@ export interface League {
   description: string;
   logoUrl?: string;
   ownerId: string;
+  managerId?: string;
+  managerName?: string;
+  managerEmail?: string;
   createdAt: string;
 }
 

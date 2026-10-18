@@ -1,19 +1,29 @@
 import React, { useState } from 'react';
-import type { Season } from '../types/holdem';
-import { AppwriteService } from '../services/appwriteService';
+import type { Season } from '@/types/holdem';
+import { AppwriteService } from '@/services/appwriteService';
 import { 
   Trophy, 
   Plus, 
   Calendar, 
   Trash2, 
   Edit3, 
-  X, 
   Check, 
   AlertCircle,
   Sparkles,
-  CheckCircle2,
-  Clock
+  CheckCircle2
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent } from '@/components/ui/card';
 
 interface SeasonManagerModalProps {
   isOpen: boolean;
@@ -39,8 +49,6 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successMsg, setSuccessMsg] = useState<string>('');
-
-  if (!isOpen) return null;
 
   const handleStartAdd = () => {
     setEditingSeasonId(null);
@@ -77,19 +85,15 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
   const handleSaveSeason = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) {
-      setErrorMsg('Season name is required');
+      setErrorMsg('Season name is required.');
       return;
     }
-    if (!formData.startDate) {
-      setErrorMsg('Start date is required');
+    if (!formData.startDate || !formData.endDate) {
+      setErrorMsg('Start date and end date are required.');
       return;
     }
-    if (!formData.endDate) {
-      setErrorMsg('End date is required');
-      return;
-    }
-    if (new Date(formData.startDate) > new Date(formData.endDate)) {
-      setErrorMsg('End date must be after start date');
+    if (new Date(formData.endDate) <= new Date(formData.startDate)) {
+      setErrorMsg('End date must be after start date.');
       return;
     }
 
@@ -99,15 +103,15 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
     try {
       if (isAddingNew) {
         const created = await AppwriteService.createSeason({
+          leagueId: '1',
           name: formData.name.trim(),
           startDate: formData.startDate,
           endDate: formData.endDate,
-          isActive: formData.isActive,
-          leagueId: 'league_1',
+          isActive: formData.isActive || seasons.length === 0,
         });
 
-        let updatedSeasons = [created, ...seasons];
-        if (formData.isActive) {
+        let updatedSeasons = [...seasons, created];
+        if (created.isActive) {
           updatedSeasons = updatedSeasons.map((s) => ({
             ...s,
             isActive: s.$id === created.$id,
@@ -115,8 +119,8 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
         }
 
         onSeasonsChange(updatedSeasons);
+        setSuccessMsg(`Created season "${created.name}".`);
         setIsAddingNew(false);
-        setSuccessMsg(`Created season "${created.name}" successfully.`);
         setTimeout(() => setSuccessMsg(''), 3000);
       } else if (editingSeasonId) {
         const success = await AppwriteService.updateSeason(editingSeasonId, {
@@ -136,21 +140,27 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
                   endDate: formData.endDate,
                   isActive: formData.isActive,
                 }
-              : formData.isActive
-              ? { ...s, isActive: false }
               : s
           );
 
+          if (formData.isActive) {
+            updatedSeasons = updatedSeasons.map((s) => ({
+              ...s,
+              isActive: s.$id === editingSeasonId,
+            }));
+          }
+
           onSeasonsChange(updatedSeasons);
+          setSuccessMsg(`Updated season "${formData.name.trim()}".`);
           setEditingSeasonId(null);
-          setSuccessMsg('Season updated successfully.');
           setTimeout(() => setSuccessMsg(''), 3000);
         } else {
-          setErrorMsg('Failed to update season in database');
+          setErrorMsg('Failed to update season in database.');
         }
       }
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Error saving season');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error saving season';
+      setErrorMsg(msg);
     } finally {
       setIsSaving(false);
     }
@@ -164,8 +174,9 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
       onSeasonsChange(updated);
       setSuccessMsg('Active season updated.');
       setTimeout(() => setSuccessMsg(''), 3000);
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Error updating active season');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error updating active season';
+      setErrorMsg(msg);
     } finally {
       setIsSaving(false);
     }
@@ -187,7 +198,6 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
       const success = await AppwriteService.deleteSeason(seasonId);
       if (success) {
         const remaining = seasons.filter((s) => s.$id !== seasonId);
-        // If we deleted the active season, activate the first remaining
         const hasActive = remaining.some((s) => s.isActive);
         if (!hasActive && remaining.length > 0) {
           remaining[0].isActive = true;
@@ -198,8 +208,9 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
       } else {
         setErrorMsg('Failed to delete season');
       }
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Error deleting season');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error deleting season';
+      setErrorMsg(msg);
     } finally {
       setIsSaving(false);
     }
@@ -215,142 +226,149 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
-      <div className="glass-panel w-full max-w-2xl rounded-3xl border border-amber-500/40 p-6 shadow-2xl relative felt-glow max-h-[90vh] flex flex-col">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-6 overflow-hidden">
         
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
-              <Trophy className="w-5 h-5" />
+        <DialogHeader className="border-b border-slate-800 pb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <Trophy className="w-5 h-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl font-bold text-white flex items-center gap-2">
+                  Championship Seasons Manager
+                </DialogTitle>
+                <DialogDescription>
+                  Configure points races, active seasons, and league timelines
+                </DialogDescription>
+              </div>
             </div>
-            <div>
-              <h3 className="text-lg font-black text-white flex items-center gap-2">
-                Championship Seasons Manager
-              </h3>
-              <p className="text-xs text-slate-400">Add, edit, or set active league seasons</p>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2">
             {!isAddingNew && !editingSeasonId && (
-              <button
+              <Button
+                variant="default"
+                size="sm"
                 onClick={handleStartAdd}
-                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
+                className="mr-6"
               >
                 <Plus className="w-4 h-4" /> Add Season
-              </button>
+              </Button>
             )}
-            <button
-              onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
           </div>
-        </div>
+        </DialogHeader>
 
         {/* Alerts */}
         {errorMsg && (
-          <div className="mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
+          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
 
         {successMsg && (
-          <div className="mt-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
             <span>{successMsg}</span>
           </div>
         )}
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto py-4 space-y-4">
+        <div className="flex-1 overflow-y-auto space-y-4 py-1 pr-1 scrollbar-thin">
           
           {/* Add / Edit Form */}
           {(isAddingNew || editingSeasonId) && (
-            <form onSubmit={handleSaveSeason} className="p-4 rounded-2xl bg-slate-900 border border-amber-500/40 space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {isAddingNew ? 'Create New Season' : 'Edit Season Details'}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleCancelForm}
-                  className="text-xs text-slate-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-              </div>
+            <Card className="border-amber-500/40 bg-slate-900/90 shadow-lg">
+              <form onSubmit={handleSaveSeason}>
+                <CardContent className="p-4 space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      {isAddingNew ? 'Create New Season' : 'Edit Season Details'}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleCancelForm}
+                      className="text-xs h-7 text-slate-400 hover:text-white"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Season Name *</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 2026 Crawl 4 or Fall Championship"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full bg-slate-950 text-white text-xs px-3 py-2.5 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
-                  required
-                />
-              </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="seasonName">Season Name *</Label>
+                    <Input
+                      id="seasonName"
+                      type="text"
+                      placeholder="e.g. 2026 Crawl 4 or Fall Championship"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      required
+                    />
+                  </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-300">Start Date *</label>
-                  <input
-                    type="date"
-                    value={formData.startDate}
-                    onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                    className="w-full bg-slate-950 text-white text-xs px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
-                    required
-                  />
-                </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="startDate">Start Date *</Label>
+                      <Input
+                        id="startDate"
+                        type="date"
+                        value={formData.startDate}
+                        onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                        required
+                      />
+                    </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-300">End Date *</label>
-                  <input
-                    type="date"
-                    value={formData.endDate}
-                    onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                    className="w-full bg-slate-950 text-white text-xs px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
-                    required
-                  />
-                </div>
-              </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="endDate">End Date *</Label>
+                      <Input
+                        id="endDate"
+                        type="date"
+                        value={formData.endDate}
+                        onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                        required
+                      />
+                    </div>
+                  </div>
 
-              {/* Is Active Toggle */}
-              <label className="flex items-center gap-2 cursor-pointer pt-1">
-                <input
-                  type="checkbox"
-                  checked={formData.isActive}
-                  onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                  className="rounded bg-slate-950 border-slate-700 text-amber-500 focus:ring-0 w-4 h-4"
-                />
-                <span className="text-xs font-semibold text-white">
-                  Set as current Active Season (will be used for leaderboards and schedules)
-                </span>
-              </label>
+                  {/* Is Active Toggle */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="isActiveSeason"
+                      checked={formData.isActive}
+                      onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
+                      className="rounded bg-slate-950 border-slate-700 text-amber-500 focus:ring-amber-500 w-4 h-4 cursor-pointer"
+                    />
+                    <Label htmlFor="isActiveSeason" className="cursor-pointer text-xs text-slate-200">
+                      Set as current Active Season (used for leaderboards and schedules)
+                    </Label>
+                  </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleCancelForm}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all disabled:opacity-50"
-                >
-                  {isSaving ? 'Saving...' : isAddingNew ? 'Create Season' : 'Update Season'}
-                </button>
-              </div>
-            </form>
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCancelForm}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="default"
+                      size="sm"
+                      disabled={isSaving}
+                    >
+                      {isSaving ? 'Saving...' : isAddingNew ? 'Create Season' : 'Update Season'}
+                    </Button>
+                  </div>
+                </CardContent>
+              </form>
+            </Card>
           )}
 
           {/* Existing Seasons List */}
@@ -360,71 +378,75 @@ export const SeasonManagerModal: React.FC<SeasonManagerModalProps> = ({
             </h4>
 
             {seasons.map((season) => (
-              <div
+              <Card
                 key={season.$id}
-                className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+                className={
                   season.isActive
-                    ? 'bg-amber-500/10 border-amber-500/50 gold-glow'
-                    : 'bg-slate-900/80 border-slate-800'
-                }`}
+                    ? 'border-amber-500/50 bg-amber-500/5'
+                    : 'border-slate-800 bg-slate-900/60'
+                }
               >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <h5 className="font-bold text-white text-base">{season.name}</h5>
-                    {season.isActive ? (
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-                        <Check className="w-3 h-3" /> ACTIVE
+                <div className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h5 className="font-bold text-white text-base">{season.name}</h5>
+                      {season.isActive ? (
+                        <Badge variant="success">
+                          <Check className="w-3 h-3" /> ACTIVE
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary">ARCHIVED</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>
+                        {formatDate(season.startDate)} — {formatDate(season.endDate)}
                       </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-semibold uppercase tracking-wider">
-                        ARCHIVED
-                      </span>
-                    )}
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-400 flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span>
-                      {formatDate(season.startDate)} — {formatDate(season.endDate)}
-                    </span>
-                  </p>
-                </div>
 
-                <div className="flex items-center gap-2 self-end sm:self-center">
-                  {!season.isActive && (
-                    <button
-                      onClick={() => handleSetActive(season.$id)}
-                      disabled={isSaving}
-                      className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all disabled:opacity-50"
-                      title="Set as Active Season"
+                  <div className="flex items-center gap-2 self-end sm:self-center">
+                    {!season.isActive && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleSetActive(season.$id)}
+                        disabled={isSaving}
+                        className="text-emerald-400 hover:text-emerald-300 hover:border-emerald-500/50"
+                      >
+                        Make Active
+                      </Button>
+                    )}
+
+                    <Button
+                      variant="outline"
+                      size="icon-sm"
+                      onClick={() => handleStartEdit(season)}
+                      title="Edit Season"
                     >
-                      Make Active
-                    </button>
-                  )}
+                      <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                    </Button>
 
-                  <button
-                    onClick={() => handleStartEdit(season)}
-                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all"
-                    title="Edit Season"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-amber-400" />
-                  </button>
-
-                  <button
-                    onClick={() => handleDeleteSeason(season.$id, season.name)}
-                    className="p-2 rounded-lg bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/40 transition-all"
-                    title="Delete Season"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                    <Button
+                      variant="outline"
+                      size="icon-sm"
+                      onClick={() => handleDeleteSeason(season.$id, season.name)}
+                      className="hover:border-rose-500/40 hover:bg-rose-500/20 hover:text-rose-400 text-slate-400"
+                      title="Delete Season"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
 
         </div>
 
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 

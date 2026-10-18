@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import type { UserProfile, UserRole } from '../types/holdem';
-import { AuthService } from '../services/authService';
+import type { UserProfile, UserRole } from '@/types/holdem';
+import { AuthService } from '@/services/authService';
 import { 
   UserPlus, 
-  X, 
   Mail, 
   User, 
   Crown, 
@@ -13,6 +12,16 @@ import {
   CheckCircle2, 
   AlertCircle 
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 interface UserInviteModalProps {
   isOpen: boolean;
@@ -30,8 +39,6 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
   const [role, setRole] = useState<UserRole>('player');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-
-  if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,79 +58,77 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
       const created = await AuthService.createUser(name.trim(), email.trim(), role);
       onUserCreated(created);
       onClose();
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Failed to create user');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to create user';
+      setErrorMsg(msg);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
-      <div className="glass-panel w-full max-w-lg rounded-3xl border border-indigo-500/40 p-6 shadow-2xl relative felt-glow max-h-[90vh] flex flex-col">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-6 overflow-hidden">
         
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800 shrink-0">
+        <DialogHeader className="border-b border-slate-800 pb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
               <UserPlus className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-lg font-black text-white">Add League Member / Staff</h3>
-              <p className="text-xs text-slate-400">Register new staff or player and assign initial permission role</p>
+              <DialogTitle className="text-xl font-bold text-white tracking-tight">
+                Add League Member / Staff
+              </DialogTitle>
+              <DialogDescription>
+                Register new staff or player and assign initial permission role
+              </DialogDescription>
             </div>
           </div>
-
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        </DialogHeader>
 
         {errorMsg && (
-          <div className="mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
+          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto py-4 space-y-4">
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto space-y-4 py-1 pr-1 scrollbar-thin">
+          <div className="space-y-1.5">
+            <Label htmlFor="memberName" className="flex items-center gap-1.5">
               <User className="w-3.5 h-3.5 text-amber-400" /> Full Name *
-            </label>
-            <input
+            </Label>
+            <Input
+              id="memberName"
               type="text"
               placeholder="e.g. Phil Ivey or Alex Dealer"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full bg-slate-900 text-white text-xs px-3.5 py-2.5 rounded-xl border border-slate-800 focus:outline-none focus:border-indigo-500"
               required
             />
           </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+          <div className="space-y-1.5">
+            <Label htmlFor="memberEmail" className="flex items-center gap-1.5">
               <Mail className="w-3.5 h-3.5 text-indigo-400" /> Email Address *
-            </label>
-            <input
+            </Label>
+            <Input
+              id="memberEmail"
               type="email"
               placeholder="user@holdempro.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-slate-900 text-white text-xs px-3.5 py-2.5 rounded-xl border border-slate-800 focus:outline-none focus:border-indigo-500"
               required
             />
           </div>
 
           {/* Role Selection */}
           <div className="space-y-2">
-            <label className="text-xs font-semibold text-slate-300 block">
+            <Label className="block">
               Assign League Role &amp; Access Level *
-            </label>
+            </Label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               
@@ -142,7 +147,7 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
                   </span>
                   {role === 'manager' && <CheckCircle2 className="w-4 h-4 text-amber-400" />}
                 </div>
-                <p className="text-[10px] text-slate-400 leading-tight">
+                <p className="text-[11px] text-slate-400 leading-tight">
                   Full admin: Venues, Seasons, User Roles &amp; Game Management
                 </p>
               </div>
@@ -162,7 +167,7 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
                   </span>
                   {role === 'dealer' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
                 </div>
-                <p className="text-[10px] text-slate-400 leading-tight">
+                <p className="text-[11px] text-slate-400 leading-tight">
                   Tournament desk: Timer controls, rebuys, addons, bust-outs
                 </p>
               </div>
@@ -182,7 +187,7 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
                   </span>
                   {role === 'scribe' && <CheckCircle2 className="w-4 h-4 text-indigo-400" />}
                 </div>
-                <p className="text-[10px] text-slate-400 leading-tight">
+                <p className="text-[11px] text-slate-400 leading-tight">
                   Seating desk: Walk-in registration, bust-outs &amp; KO bounty awards
                 </p>
               </div>
@@ -202,7 +207,7 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
                   </span>
                   {role === 'player' && <CheckCircle2 className="w-4 h-4 text-slate-300" />}
                 </div>
-                <p className="text-[10px] text-slate-400 leading-tight">
+                <p className="text-[11px] text-slate-400 leading-tight">
                   Public member: Standings, schedules, QR check-in &amp; TV display
                 </p>
               </div>
@@ -211,25 +216,27 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-800">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="submit"
+              variant="default"
+              size="sm"
               disabled={isLoading}
-              className="px-5 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold transition-all shadow-md disabled:opacity-50"
             >
               {isLoading ? 'Creating...' : 'Add Member'}
-            </button>
+            </Button>
           </div>
         </form>
 
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 

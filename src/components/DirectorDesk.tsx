@@ -22,7 +22,8 @@ import {
   Award,
   Calendar,
   Edit3,
-  Trophy
+  Trophy,
+  ArrowLeft
 } from 'lucide-react';
 
 interface DirectorDeskProps {
@@ -38,6 +39,8 @@ interface DirectorDeskProps {
   onSelectGame: (game: Game) => void;
   onGamesChange: (games: Game[]) => void;
   onEntriesChange: (entries: GameEntry[]) => void;
+  onBack?: () => void;
+  onSelectPlayer?: (player: Player) => void;
 }
 
 export const DirectorDesk: React.FC<DirectorDeskProps> = ({
@@ -53,6 +56,8 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   onSelectGame,
   onGamesChange,
   onEntriesChange,
+  onBack,
+  onSelectPlayer,
 }) => {
   const [activeTab, setActiveTab] = useState<'live' | 'schedules'>('live');
 
@@ -337,6 +342,16 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12">
       
+      {/* Back Button Header */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to Games
+        </button>
+      )}
+
       {/* 1. Director Header & Tab Switcher */}
       <div className="glass-panel rounded-2xl p-5 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
@@ -532,8 +547,27 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                     <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-amber-400 shrink-0">
                       T{entry.tableNumber}S{entry.seatNumber}
                     </div>
-                    <div>
-                      <h4 className={`font-bold text-sm ${entry.isEliminated ? 'line-through text-slate-500' : 'text-white'}`}>
+                    <div 
+                      onClick={() => {
+                        if (onSelectPlayer) {
+                          const p = players.find((x) => x.$id === entry.playerId) || {
+                            $id: entry.playerId,
+                            name: entry.playerName,
+                            totalPoints: 10000,
+                            careerWins: 2,
+                            careerKOs: entry.kosCount,
+                            gamesPlayed: 8,
+                            seasonId: activeGame.seasonId,
+                            leagueId: 'league_1',
+                            suitIcon: 'spades',
+                            isMember: true,
+                          };
+                          onSelectPlayer(p);
+                        }
+                      }}
+                      className={onSelectPlayer ? 'cursor-pointer group/player' : ''}
+                    >
+                      <h4 className={`font-bold text-sm ${entry.isEliminated ? 'line-through text-slate-500' : 'text-white group-hover/player:text-amber-400 transition-colors'}`}>
                         {entry.playerName}
                       </h4>
                       <div className="text-[10px] text-slate-400 flex items-center gap-2">

@@ -21,7 +21,8 @@ import {
   CheckCircle2,
   Users,
   Sparkles,
-  Award
+  Award,
+  ArrowLeft
 } from 'lucide-react';
 
 interface AdminViewProps {
@@ -30,6 +31,7 @@ interface AdminViewProps {
   currentUser: UserProfile | null;
   onVenuesChange: (venues: Venue[]) => void;
   onRoleChange: (role: UserRole) => void;
+  onBack?: () => void;
 }
 
 export const AdminView: React.FC<AdminViewProps> = ({
@@ -38,6 +40,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   currentUser,
   onVenuesChange,
   onRoleChange,
+  onBack,
 }) => {
   const [isVenueModalOpen, setIsVenueModalOpen] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
@@ -53,6 +56,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12">
       
+      {/* Back Button Header */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+      )}
+
       {/* 1. Admin Header */}
       <div className="glass-panel rounded-2xl p-6 border border-amber-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">

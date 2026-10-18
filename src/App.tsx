@@ -90,6 +90,38 @@ export const App: React.FC = () => {
     loadData();
   }, []);
 
+  // Sync with browser history and popstate
+  useEffect(() => {
+    const rawHash = window.location.hash.replace('#', '') as ViewMode;
+    const validViews: ViewMode[] = ['games', 'leaderboard', 'stats', 'director', 'admin', 'tv'];
+    if (validViews.includes(rawHash)) {
+      setCurrentView(rawHash);
+      window.history.replaceState({ view: rawHash }, '', `#${rawHash}`);
+    } else {
+      window.history.replaceState({ view: 'games' }, '', '#games');
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      const state = event.state;
+      const hashView = window.location.hash.replace('#', '') as ViewMode;
+      const targetView: ViewMode =
+        state?.view || (validViews.includes(hashView) ? hashView : 'games');
+
+      if (targetView === 'stats' && state?.playerId) {
+        const found = players.find((p) => p.$id === state.playerId);
+        if (found) setSelectedPlayer(found);
+      }
+      if (targetView === 'director' && state?.gameId) {
+        const found = games.find((g) => g.$id === state.gameId);
+        if (found) setSelectedGame(found);
+      }
+      setCurrentView(targetView);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [players, games]);
+
   // Internal App Navigation Stack
   const handleNavigate = (view: ViewMode) => {
     if (view === currentView) return;
@@ -106,15 +138,20 @@ export const App: React.FC = () => {
 
     setViewHistory((prev) => [...prev, currentView]);
     setCurrentView(view);
+    window.history.pushState({ view }, '', `#${view}`);
   };
 
   const handleGoBack = () => {
-    if (viewHistory.length > 0) {
+    if (window.history.state && window.history.length > 1) {
+      window.history.back();
+    } else if (viewHistory.length > 0) {
       const prev = viewHistory[viewHistory.length - 1];
       setViewHistory((h) => h.slice(0, -1));
       setCurrentView(prev);
+      window.history.replaceState({ view: prev }, '', `#${prev}`);
     } else {
       setCurrentView('games');
+      window.history.replaceState({ view: 'games' }, '', '#games');
     }
   };
 
@@ -122,7 +159,9 @@ export const App: React.FC = () => {
     setSelectedGame(game);
     const entries = await AppwriteService.getGameEntries(game.$id);
     setGameEntries(entries);
-    handleNavigate('director');
+    setViewHistory((prev) => [...prev, currentView]);
+    setCurrentView('director');
+    window.history.pushState({ view: 'director', gameId: game.$id }, '', '#director');
   };
 
   const handleUpdateGame = (updatedGame: Game) => {
@@ -132,7 +171,9 @@ export const App: React.FC = () => {
 
   const handleSelectPlayer = (player: Player) => {
     setSelectedPlayer(player);
-    handleNavigate('stats');
+    setViewHistory((prev) => [...prev, currentView]);
+    setCurrentView('stats');
+    window.history.pushState({ view: 'stats', playerId: player.$id }, '', '#stats');
   };
 
   const handleEliminatePlayer = (entryId: string, koByPlayerId?: string) => {
@@ -257,6 +298,8 @@ export const App: React.FC = () => {
             onSelectGame={handleSelectGame}
             onGamesChange={setGames}
             onEntriesChange={setGameEntries}
+            onBack={handleGoBack}
+            onSelectPlayer={handleSelectPlayer}
           />
         )}
 
@@ -270,6 +313,7 @@ export const App: React.FC = () => {
               AuthService.updateRole(newRole);
               setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));
             }}
+            onBack={handleGoBack}
           />
         )}
       </main>

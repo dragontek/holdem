@@ -88,23 +88,35 @@ export const Navigation: React.FC<NavigationProps> = ({
             <button
               onClick={() => onSelectView('games')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                currentView === 'games'
+                currentView === 'games' || currentView === 'director'
                   ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
               }`}
             >
-              <Calendar className="w-3.5 h-3.5" /> Games
+              <Calendar className="w-3.5 h-3.5" /> 
+              <span>Games</span>
+              {currentView === 'director' && (
+                <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-slate-950/20 text-slate-950">
+                  Desk
+                </span>
+              )}
             </button>
 
             <button
               onClick={() => onSelectView('leaderboard')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                currentView === 'leaderboard'
+                currentView === 'leaderboard' || currentView === 'stats'
                   ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
               }`}
             >
-              <Trophy className="w-3.5 h-3.5" /> Standings
+              <Trophy className="w-3.5 h-3.5" /> 
+              <span>Standings</span>
+              {currentView === 'stats' && (
+                <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-slate-950/20 text-slate-950">
+                  Profile
+                </span>
+              )}
             </button>
 
             {canAccessAdmin && (
@@ -197,7 +209,7 @@ export const Navigation: React.FC<NavigationProps> = ({
         <button
           onClick={() => onSelectView('games')}
           className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-xs transition-all ${
-            currentView === 'games' ? 'text-amber-400 font-bold' : 'text-slate-400'
+            currentView === 'games' || currentView === 'director' ? 'text-amber-400 font-bold' : 'text-slate-400'
           }`}
         >
           <Calendar className="w-5 h-5" />
@@ -207,7 +219,7 @@ export const Navigation: React.FC<NavigationProps> = ({
         <button
           onClick={() => onSelectView('leaderboard')}
           className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-xs transition-all ${
-            currentView === 'leaderboard' ? 'text-amber-400 font-bold' : 'text-slate-400'
+            currentView === 'leaderboard' || currentView === 'stats' ? 'text-amber-400 font-bold' : 'text-slate-400'
           }`}
         >
           <Trophy className="w-5 h-5" />

@@ -29,7 +29,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   onSelectPlayer,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<SubTabMode>('points');
-  const [selectedSeasonId, setSelectedSeasonId] = useState<string>(seasons[0]?.$id || 'season_2026_crawl3');
+  const [selectedSeasonId, setSelectedSeasonId] = useState<string>(
+    seasons.find((s) => s.isActive)?.$id || seasons[0]?.$id || 'season_2026_crawl3'
+  );
   const [selectedVenueId, setSelectedVenueId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 

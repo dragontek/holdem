@@ -37,6 +37,7 @@ interface DirectorDeskProps {
   onGamesChange?: (games: Game[]) => void;
   onEntriesChange: (entries: GameEntry[]) => void;
   onBack?: () => void;
+  backLabel?: string;
   onSelectPlayer?: (player: Player) => void;
 }
 
@@ -54,6 +55,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   onGamesChange,
   onEntriesChange,
   onBack,
+  backLabel,
   onSelectPlayer,
 }) => {
   // Clock state
@@ -341,7 +343,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
           onClick={onBack}
           className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
         >
-          <ArrowLeft className="w-4 h-4" /> Back to Games
+          <ArrowLeft className="w-4 h-4" /> {backLabel || 'Back to Games'}
         </button>
       )}
 

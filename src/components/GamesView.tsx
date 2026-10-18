@@ -26,6 +26,7 @@ interface GamesViewProps {
   isDirector?: boolean;
   onOpenScheduleModal?: () => void;
   onOpenVenueModal?: () => void;
+  seasonName?: string;
 }
 
 export const GamesView: React.FC<GamesViewProps> = ({
@@ -37,6 +38,7 @@ export const GamesView: React.FC<GamesViewProps> = ({
   isDirector,
   onOpenScheduleModal,
   onOpenVenueModal,
+  seasonName = '2026 Crawl 3',
 }) => {
   const [selectedVenueId, setSelectedVenueId] = useState<string>('all');
 
@@ -45,9 +47,41 @@ export const GamesView: React.FC<GamesViewProps> = ({
     return game.venueId === selectedVenueId;
   });
 
+  const liveGamesCount = games.filter(g => g.status === 'running').length;
+  const scheduledGamesCount = games.filter(g => g.status === 'scheduled').length;
+
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12">
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12 animate-fadeIn">
       
+      {/* Executive Page Header Banner */}
+      <div className="glass-panel rounded-2xl p-6 border border-slate-800 space-y-4">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl felt-gradient border border-emerald-500/40 flex items-center justify-center text-amber-400 shrink-0 shadow-lg felt-glow">
+              <Calendar className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase tracking-wider">
+                  TOURNAMENT HUB
+                </span>
+                <span className="text-xs text-slate-400 font-semibold">{seasonName}</span>
+              </div>
+              <h1 className="text-2xl font-black text-white mt-0.5">Tournament Schedule &amp; Live Games</h1>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="px-3.5 py-2 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-300 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-emerald-400 font-bold">{liveGamesCount} Live</span>
+              <span className="text-slate-500">•</span>
+              <span className="text-slate-300">{scheduledGamesCount} Upcoming Events</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* 1. Announcements Banner */}
       {announcements.map((ann) => (
         <div

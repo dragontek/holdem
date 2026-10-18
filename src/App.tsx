@@ -254,6 +254,7 @@ export const App: React.FC = () => {
           <GamesView
             games={games}
             venues={venues}
+            seasonName={activeSeasonName}
             announcements={announcements}
             hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: "Quad 6's", currentPool: 140, isClaimed: false }}
             onSelectGame={handleSelectGame}
@@ -299,6 +300,7 @@ export const App: React.FC = () => {
             onGamesChange={setGames}
             onEntriesChange={setGameEntries}
             onBack={handleGoBack}
+            backLabel={previousView === 'admin' ? 'Back to Admin Console' : 'Back to Games'}
             onSelectPlayer={handleSelectPlayer}
           />
         )}
@@ -318,6 +320,7 @@ export const App: React.FC = () => {
             }}
             onSelectGame={handleSelectGame}
             onBack={handleGoBack}
+            backLabel={previousView === 'director' ? 'Back to Director Desk' : 'Back to Games'}
           />
         )}
       </main>

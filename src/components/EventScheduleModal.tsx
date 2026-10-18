@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Game, Venue, Season } from '../types/holdem';
 import { AppwriteService } from '../services/appwriteService';
 import { 
@@ -15,6 +15,7 @@ interface EventScheduleModalProps {
   gameToEdit?: Game | null;
   venues: Venue[];
   seasons: Season[];
+  defaultSeasonId?: string;
   onGameSaved: (game: Game) => void;
   onGameDeleted?: (gameId: string) => void;
 }
@@ -25,18 +26,19 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
   gameToEdit,
   venues,
   seasons,
+  defaultSeasonId,
   onGameSaved,
   onGameDeleted,
 }) => {
   const isEditing = Boolean(gameToEdit);
 
   const defaultVenueId = venues[0]?.$id || '';
-  const defaultSeasonId = seasons.find((s) => s.isActive)?.$id || seasons[0]?.$id || 'season_2026_crawl3';
+  const initialSeasonId = defaultSeasonId || seasons.find((s) => s.isActive)?.$id || seasons[0]?.$id || 'season_2026_crawl3';
 
   const [formData, setFormData] = useState({
     title: gameToEdit?.title || '',
     venueId: gameToEdit?.venueId || defaultVenueId,
-    seasonId: gameToEdit?.seasonId || defaultSeasonId,
+    seasonId: gameToEdit?.seasonId || initialSeasonId,
     scheduledAt: gameToEdit?.scheduledAt || new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
     dealerName: gameToEdit?.dealerName || 'House Dealer',
     buyinAmount: gameToEdit?.buyinAmount ?? 30,
@@ -46,6 +48,26 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
     hotHandJackpot: gameToEdit?.hotHandJackpot ?? 100,
     status: gameToEdit?.status || 'scheduled',
   });
+
+  useEffect(() => {
+    if (isOpen) {
+      const targetSeasonId = gameToEdit?.seasonId || defaultSeasonId || seasons.find((s) => s.isActive)?.$id || seasons[0]?.$id || '';
+      setFormData({
+        title: gameToEdit?.title || '',
+        venueId: gameToEdit?.venueId || venues[0]?.$id || '',
+        seasonId: targetSeasonId,
+        scheduledAt: gameToEdit?.scheduledAt || new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        dealerName: gameToEdit?.dealerName || 'House Dealer',
+        buyinAmount: gameToEdit?.buyinAmount ?? 30,
+        rebuyAmount: gameToEdit?.rebuyAmount ?? 20,
+        addonAmount: gameToEdit?.addonAmount ?? 10,
+        startingChips: gameToEdit?.startingChips ?? 15000,
+        hotHandJackpot: gameToEdit?.hotHandJackpot ?? 100,
+        status: gameToEdit?.status || 'scheduled',
+      });
+      setErrorMsg('');
+    }
+  }, [isOpen, gameToEdit, defaultSeasonId]);
 
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');

@@ -108,12 +108,12 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
             </h1>
           </div>
 
-          {/* Season & Venue Selectors */}
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          {/* Season & Venue Selectors (Mobile-First Stack -> Desktop Row) */}
+          <div className="grid grid-cols-1 sm:flex items-center gap-2 w-full sm:w-auto">
             <select
               value={selectedSeasonId}
               onChange={(e) => handleSeasonChange(e.target.value)}
-              className="bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500 flex-1 sm:flex-none"
+              className="min-h-[44px] sm:min-h-[38px] bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500 w-full sm:w-auto"
             >
               {seasons.map((s) => (
                 <option key={s.$id} value={s.$id}>
@@ -125,7 +125,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
             <select
               value={selectedVenueId}
               onChange={(e) => setSelectedVenueId(e.target.value)}
-              className="bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500 flex-1 sm:flex-none"
+              className="min-h-[44px] sm:min-h-[38px] bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500 w-full sm:w-auto"
             >
               <option value="all">All Venues</option>
               {venues.map((v) => (
@@ -139,21 +139,22 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
 
         {/* Search Input Bar */}
         <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
           <input
             type="text"
             placeholder="Search player by name or nickname..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-950/80 text-sm text-white placeholder-slate-500 pl-10 pr-4 py-2.5 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
+            className="w-full min-h-[44px] bg-slate-950/80 text-sm text-white placeholder-slate-500 pl-10 pr-4 py-2.5 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
           />
         </div>
 
         {/* Sub-Tabs: Points, Ranking, Wins, KOs */}
         <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
           <button
+            type="button"
             onClick={() => setActiveSubTab('points')}
-            className={`py-2 rounded-lg text-xs font-bold transition-all ${
+            className={`min-h-[42px] py-2 rounded-lg text-xs font-bold transition-all ${
               activeSubTab === 'points'
                 ? 'bg-amber-500 text-slate-950 shadow-md'
                 : 'text-slate-400 hover:text-white'

@@ -2,19 +2,24 @@
 
 @layer base {
   :root {
-    --background: #020617; /* slate-950 */
-    --foreground: #f8fafc; /* slate-50 */
+    --background: #020617;
+    /* slate-950 */
+    --foreground: #f8fafc;
+    /* slate-50 */
 
-    --card: rgba(15, 23, 42, 0.75); /* slate-900 with glass opacity */
+    --card: rgba(15, 23, 42, 0.75);
+    /* slate-900 with glass opacity */
     --card-foreground: #f8fafc;
 
     --popover: #0f172a;
     --popover-foreground: #f8fafc;
 
-    --primary: #f59e0b; /* amber-500 tournament gold */
+    --primary: #f59e0b;
+    /* amber-500 tournament gold */
     --primary-foreground: #020617;
 
-    --secondary: #1e293b; /* slate-800 */
+    --secondary: #1e293b;
+    /* slate-800 */
     --secondary-foreground: #e2e8f0;
 
     --muted: #1e293b;
@@ -23,10 +28,12 @@
     --accent: #1e293b;
     --accent-foreground: #f8fafc;
 
-    --destructive: #ef4444; /* red-500 */
+    --destructive: #ef4444;
+    /* red-500 */
     --destructive-foreground: #f8fafc;
 
-    --border: #334155; /* slate-700 / slate-800 */
+    --border: #334155;
+    /* slate-700 / slate-800 */
     --input: #1e293b;
     --ring: #f59e0b;
 
@@ -37,14 +44,41 @@
     --color-gold: #D4AF37;
     --color-poker-red: #E63946;
   }
-  
+
+  html {
+    background-color: #020617;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     @apply bg-slate-950 text-slate-100 antialiased font-sans selection:bg-amber-500 selection:text-slate-950;
-    background-image: 
+    background-image:
       radial-gradient(at 50% 0%, rgba(20, 83, 45, 0.20) 0px, transparent 70%),
       radial-gradient(at 100% 100%, rgba(180, 83, 9, 0.12) 0px, transparent 50%);
     min-height: 100vh;
+    min-height: 100dvh;
+    overflow-x: clip;
   }
+
+  /* Prevent jarring iOS Safari auto-zoom when focusing form fields on small touch screens */
+  @media (max-width: 639px) {
+
+    input:not([type='checkbox']):not([type='radio']),
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
 /* Glassmorphism & Surface Utilities */
@@ -112,19 +146,27 @@
   white-space: nowrap !important;
 }
 
-/* Top-Layer Manual Popover Toast Region */
+/* Top-Layer Manual Popover Toast Region (clears mobile bottom nav & safe areas) */
 .score-toast-region[popover] {
   position: fixed;
-  inset: auto 1rem 1rem auto;
-  margin: 0;
+  inset: auto 0.75rem calc(4.75rem + env(safe-area-inset-bottom)) 0.75rem;
+  margin: 0 auto;
   padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
-  width: min(26rem, calc(100vw - 2rem));
-  max-height: calc(100dvh - 2rem);
+  width: min(26rem, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - 6.5rem - env(safe-area-inset-bottom));
   overflow-y: auto;
   z-index: 60;
+}
+
+@media (min-width: 1024px) {
+  .score-toast-region[popover] {
+    inset: auto 1rem 1rem auto;
+    margin: 0;
+    max-height: calc(100dvh - 2rem);
+  }
 }
 
 .score-toast-region[popover]:is(:popover-open, .\:popover-open) {
@@ -139,6 +181,7 @@
     flex-direction: column;
     gap: 0.625rem;
   }
+
   .score-toast-region[data-has-items="false"] {
     display: none;
   }
@@ -149,6 +192,7 @@
     opacity: 0;
     transform: translateY(12px) scale(0.98);
   }
+
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
@@ -162,9 +206,12 @@
 }
 
 @keyframes scoreHighlightPulse {
-  0%, 100% {
+
+  0%,
+  100% {
     box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.7), 0 0 22px rgba(245, 158, 11, 0.22);
   }
+
   50% {
     box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.95), 0 0 30px rgba(245, 158, 11, 0.35);
   }
@@ -175,6 +222,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .score-toast-item,
   .player-award-highlight {
     animation: none !important;

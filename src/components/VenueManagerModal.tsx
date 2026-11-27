@@ -172,7 +172,7 @@ export const VenueManagerModal: React.FC<VenueManagerModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-6 overflow-hidden">
+      <DialogContent className="max-w-2xl max-h-[92dvh] flex flex-col p-4 sm:p-6 overflow-hidden">
         
         {/* Header */}
         <DialogHeader className="border-b border-slate-800 pb-4">

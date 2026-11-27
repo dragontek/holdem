@@ -17,8 +17,10 @@ import { AnnouncementManagerModal } from './components/AnnouncementManagerModal'
 import { InfoView } from './components/InfoView';
 import { GalleryView } from './components/GalleryView';
 import { LiveScoreNotificationOverlay } from './components/LiveScoreNotificationOverlay';
+import { PwaStatusBar } from './components/PwaStatusBar';
 import { Button } from './components/ui/button';
 import { useLiveScoreNotifications } from './hooks/useLiveScoreNotifications';
+import { usePwaInstall } from './hooks/usePwaInstall';
 import {
   APPWRITE_ENDPOINT,
   APPWRITE_PROJECT_ID,
@@ -36,13 +38,13 @@ import {
   resolveSeasonLeagueId,
   type AppRoute,
 } from './lib/router';
-import type { 
-  Game, 
-  Venue, 
-  Player, 
-  Season, 
-  Announcement, 
-  HotHandJackpot, 
+import type {
+  Game,
+  Venue,
+  Player,
+  Season,
+  Announcement,
+  HotHandJackpot,
   GameEntry,
   UserProfile,
   UserRole,
@@ -80,7 +82,7 @@ export const App: React.FC = () => {
   );
   const [routeHistory, setRouteHistory] = useState<AppRoute[]>([]);
   const [activeLeagueId, setActiveLeagueId] = useState<string>(() => readStoredLeagueId());
-  
+
   const [games, setGames] = useState<Game[]>([]);
   const [events, setEvents] = useState<TournamentEvent[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
@@ -89,7 +91,7 @@ export const App: React.FC = () => {
   const [leagues, setLeagues] = useState<League[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [hotHand, setHotHand] = useState<HotHandJackpot | null>(null);
-  
+
   const [selectedGame, setSelectedGame] = useState<Game | null>(null);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [gameEntries, setGameEntries] = useState<GameEntry[]>([]);
@@ -107,6 +109,7 @@ export const App: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
 
   const currentView = route.view;
+  const pwa = usePwaInstall();
   const viewedGameId =
     currentView === 'director' || currentView === 'tv'
       ? route.gameId || selectedGame?.$id || null
@@ -439,8 +442,8 @@ export const App: React.FC = () => {
 
   const urlSeason = route.seasonId
     ? leagueSeasons.find((s) => s.$id === route.seasonId) ||
-      seasons.find((s) => s.$id === route.seasonId) ||
-      null
+    seasons.find((s) => s.$id === route.seasonId) ||
+    null
     : null;
   const isUnknownSeason = Boolean(
     !loading && route.seasonId && seasons.length > 0 && !urlSeason
@@ -468,11 +471,11 @@ export const App: React.FC = () => {
   const urlGame = route.gameId ? games.find((g) => g.$id === route.gameId) || null : null;
   const isUnknownGame = Boolean(
     !loading &&
-      route.gameId &&
-      (route.view === 'director' || route.view === 'tv') &&
-      !isUnknownSeason &&
-      games.length > 0 &&
-      !urlGame
+    route.gameId &&
+    (route.view === 'director' || route.view === 'tv') &&
+    !isUnknownSeason &&
+    games.length > 0 &&
+    !urlGame
   );
 
   const activeGameToDisplay = urlGame || selectedGame || scopedGames[0] || games[0] || null;
@@ -742,12 +745,12 @@ export const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white space-y-4">
+      <div className="min-h-[100dvh] bg-slate-950 flex flex-col items-center justify-center text-white space-y-4 px-4">
         <div className="w-16 h-16 rounded-2xl felt-gradient border-2 border-emerald-500/40 flex items-center justify-center text-3xl font-black text-amber-400 animate-bounce felt-glow">
           ♠
         </div>
         <div className="text-xl font-bold tracking-tight">Loading Jack Ten Poker...</div>
-        <div className="text-xs text-slate-400">Fetching live games, venues, and leaderboard standings</div>
+        <div className="text-xs text-slate-400 text-center">Fetching live games, venues, and leaderboard standings</div>
       </div>
     );
   }
@@ -761,10 +764,10 @@ export const App: React.FC = () => {
     previousView === 'admin'
       ? 'Back to Admin Console'
       : urlSeason
-      ? `Back to ${urlSeason.name}`
-      : previousView === 'director'
-      ? 'Back to Director Desk'
-      : 'Back to Games';
+        ? `Back to ${urlSeason.name}`
+        : previousView === 'director'
+          ? 'Back to Director Desk'
+          : 'Back to Games';
 
   const resolvedPlayer =
     (route.playerId && players.find((p) => p.$id === route.playerId)) ||
@@ -797,7 +800,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-[100dvh] bg-slate-950 text-slate-100 flex flex-col">
       {/* Navigation Header */}
       <Navigation
         currentView={currentView}
@@ -811,6 +814,21 @@ export const App: React.FC = () => {
         leagues={leagues}
         activeLeagueId={resolvedActiveLeagueId}
         onSelectLeague={handleSelectLeague}
+        canInstallPwa={pwa.canInstall}
+        onInstallPwa={() => void pwa.triggerInstall()}
+      />
+
+      {/* PWA Offline, Update & Install Status Bar */}
+      <PwaStatusBar
+        isOffline={pwa.isOffline}
+        updateAvailable={pwa.updateAvailable}
+        showInstallBanner={pwa.showInstallBanner}
+        isIosSafari={pwa.isIosSafari}
+        showIosGuide={pwa.showIosGuide}
+        onCloseIosGuide={() => pwa.setShowIosGuide(false)}
+        onInstall={() => void pwa.triggerInstall()}
+        onDismissInstall={pwa.dismissInstallBanner}
+        onApplyUpdate={pwa.applyUpdate}
       />
 
       {/* Hierarchical URL Breadcrumb & Share Link Bar */}
@@ -835,8 +853,8 @@ export const App: React.FC = () => {
         onGoGame={(g) => void handleSelectGame(g)}
       />
 
-      {/* Main View Container */}
-      <main className="flex-1">
+      {/* Main View Container (ensures safe-area bottom clearance above mobile nav up to lg) */}
+      <main className="flex-1 pb-[calc(5.25rem+env(safe-area-inset-bottom))] lg:pb-0">
         {(isUnknownSeason || isUnknownGame) ? (
           <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-2xl font-black text-amber-400">

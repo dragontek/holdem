@@ -79,7 +79,7 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-6 overflow-hidden">
+      <DialogContent className="max-w-lg max-h-[92dvh] flex flex-col p-4 sm:p-6 overflow-hidden">
         
         {/* Header */}
         <DialogHeader className="border-b border-slate-800 pb-4">

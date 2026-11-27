@@ -2,6 +2,26 @@
 
 All notable changes to **Jack Ten Poker** are documented in this file. Versions and release notes are generated automatically from Conventional Commits on `main`.
 
+## [1.1.0](https://github.com/dragontek/holdem/compare/v1.0.0...v1.1.0) (2026-11-27)
+
+### Features
+
+* **routing:** support configurable base path for GitHub Pages and subpath PWA hosting ([a2ed920](https://github.com/dragontek/holdem/commit/a2ed920ace9e99d46d2161507bf1f36350f9e311))
+* **stats:** display live unfinalized session points on player stats and leaderboard ([103a3b8](https://github.com/dragontek/holdem/commit/103a3b8b3c12b70157a55726b865cc18464ec77a))
+
+### Bug Fixes
+
+* **director:** use live game state and latest entries on player scoring cards ([3d92265](https://github.com/dragontek/holdem/commit/3d92265f192534a336f4f23ce950b431c0442d6a))
+* **scoring:** persist entry scoring metadata and preserve legacy realtime updates ([ba3e002](https://github.com/dragontek/holdem/commit/ba3e00221bb470ca97f3770aea86712377ed81f9))
+
+### Documentation
+
+* **agents:** define atomic commits, branching, conventional commits, and semver policies ([393e94d](https://github.com/dragontek/holdem/commit/393e94db219ad12d6bc1656950869a351367543e))
+
+### CI / Build Pipeline
+
+* **deploy:** add GitHub Pages DEV deploy and Appwrite Sites PROD auto-deploy ([7a6e5c8](https://github.com/dragontek/holdem/commit/7a6e5c8f1cf3fd79104d2fd674e3d6d80cfd3d13))
+
 ## 1.0.0 (2026-11-27)
 
 ### Features

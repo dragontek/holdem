@@ -1,4 +1,15 @@
-import { databases, tablesDb, isAppwriteConfigured, DATABASE_ID, APPWRITE_TABLES, APPWRITE_COLLECTIONS, ID } from '../lib/appwrite';
+import {
+  databases,
+  tablesDb,
+  storage,
+  isAppwriteConfigured,
+  DATABASE_ID,
+  VENUE_IMAGES_BUCKET_ID,
+  APPWRITE_TABLES,
+  APPWRITE_COLLECTIONS,
+  ID,
+  Query,
+} from '../lib/appwrite';
 import { 
   mockLeague, 
   mockLeagues,
@@ -25,13 +36,19 @@ import type {
   HandBonusCode,
   PointMultiplier,
   GameEntryStatus,
+  UserRole,
 } from '../types/holdem';
-import { calculateEntryScore, type FinalizedEntryResult } from '../lib/scoring';
+import { calculateEntryScore, hasReachedShowUpCutoff, type FinalizedEntryResult } from '../lib/scoring';
 
 const LOCAL_STORAGE_LEAGUES_KEY = 'holdem_leagues';
 const LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY = 'holdem_league_overrides';
+const LOCAL_STORAGE_VENUE_OVERRIDES_KEY = 'holdem_venue_overrides';
+const LOCAL_STORAGE_VENUE_DELETED_KEY = 'holdem_venue_deleted';
 const LOCAL_STORAGE_PLAYER_OVERRIDES_KEY = 'holdem_player_overrides';
+const LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY = 'holdem_announcement_overrides';
+const LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY = 'holdem_announcement_deleted';
 const LOCAL_STORAGE_GAME_OVERRIDES_KEY = 'holdem_game_overrides';
+const LOCAL_STORAGE_GAME_DELETED_KEY = 'holdem_game_deleted';
 const LOCAL_STORAGE_ENTRY_OVERRIDES_KEY = 'holdem_entry_overrides';
 const SESSION_UNSUPPORTED_COLS_KEY = 'holdem_appwrite_unsupported_cols';
 const SESSION_MISSING_TABLES_KEY = 'holdem_appwrite_missing_tables';
@@ -509,16 +526,87 @@ export class AppwriteService {
     });
   }
 
-  // Fetch Active & Historical Seasons
+  // Fetch Active & Historical Seasons (normalizes Appwrite league relationship -> leagueId)
   static async getSeasons(): Promise<Season[]> {
     const items = await resilientListRows(APPWRITE_TABLES.SEASONS);
-    return items && items.length > 0 ? (items as unknown as Season[]) : mockSeasons;
+    if (!items || items.length === 0) return mockSeasons;
+    return items.map((doc: any) => ({
+      $id: doc.$id,
+      leagueId:
+        typeof doc.league === 'object' && doc.league
+          ? doc.league.$id
+          : doc.league || doc.leagueId || '',
+      name: doc.name || '',
+      startDate: doc.startDate || '',
+      endDate: doc.endDate || '',
+      isActive: Boolean(doc.isActive),
+    }));
   }
 
-  // Fetch Venues
+  // Fetch Venues (merges Appwrite rows with official league venues & local overrides)
   static async getVenues(): Promise<Venue[]> {
+    const overrides = readOverrides<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY);
+    let deletedIds = new Set<string>();
+    try {
+      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_VENUE_DELETED_KEY);
+      if (rawDeleted) {
+        const parsed = JSON.parse(rawDeleted);
+        if (Array.isArray(parsed)) deletedIds = new Set(parsed);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+
     const items = await resilientListRows(APPWRITE_TABLES.VENUES);
-    return items && items.length > 0 ? (items as unknown as Venue[]) : mockVenues;
+    const remoteVenues: Venue[] =
+      items && items.length > 0
+        ? items.map((doc: any) => ({
+            $id: doc.$id,
+            leagueId:
+              typeof doc.league === 'object' && doc.league
+                ? doc.league.$id
+                : doc.league || doc.leagueId || '',
+            name: doc.name || '',
+            address: doc.address || '',
+            phone: doc.phone || '',
+            website: doc.website || '',
+            imageUrl: doc.imageUrl || '',
+          }))
+        : [];
+
+    const byId = new Map<string, Venue>();
+    const seenNames = new Set<string>();
+
+    for (const v of remoteVenues) {
+      if (deletedIds.has(v.$id)) continue;
+      const merged = overrides[v.$id] ? { ...v, ...overrides[v.$id] } : v;
+      byId.set(merged.$id, merged);
+      seenNames.add(merged.name.trim().toLowerCase());
+    }
+
+    // Ensure all official scorecard venues are available even before setup:appwrite is re-run
+    for (const seed of mockVenues) {
+      if (deletedIds.has(seed.$id)) continue;
+      if (byId.has(seed.$id) || seenNames.has(seed.name.trim().toLowerCase())) continue;
+      const merged = overrides[seed.$id] ? { ...seed, ...overrides[seed.$id] } : seed;
+      byId.set(merged.$id, merged);
+      seenNames.add(merged.name.trim().toLowerCase());
+    }
+
+    for (const [id, override] of Object.entries(overrides)) {
+      if (deletedIds.has(id) || byId.has(id) || !override.name) continue;
+      byId.set(id, {
+        $id: id,
+        leagueId: override.leagueId || mockLeague.$id,
+        name: override.name,
+        address: override.address || '',
+        phone: override.phone || '',
+        website: override.website || '',
+        imageUrl: override.imageUrl || '',
+      });
+    }
+
+    return Array.from(byId.values());
   }
 
   // Fetch Events within Seasons
@@ -616,31 +704,51 @@ export class AppwriteService {
     }
   }
 
+  // Normalize raw Appwrite rows (supports both 'users' and legacy 'players' tables with missing optional fields)
+  private static normalizePlayer(raw: Partial<Player> & { $id: string }): Player {
+    const validRoles: readonly Player['role'][] = ['admin', 'manager', 'dealer', 'scribe', 'player'];
+    const validSuits: readonly Player['suitIcon'][] = ['hearts', 'diamonds', 'spades', 'clubs'];
+    const role: Player['role'] =
+      raw.role && validRoles.includes(raw.role) ? raw.role : 'player';
+    const suitIcon: Player['suitIcon'] =
+      raw.suitIcon && validSuits.includes(raw.suitIcon) ? raw.suitIcon : 'spades';
+
+    return {
+      $id: raw.$id,
+      leagueId: raw.leagueId || mockLeague.$id,
+      name: typeof raw.name === 'string' && raw.name.trim() ? raw.name : raw.nickname || 'Unnamed Player',
+      nickname: typeof raw.nickname === 'string' ? raw.nickname : undefined,
+      email: typeof raw.email === 'string' ? raw.email : '',
+      role,
+      avatarUrl: typeof raw.avatarUrl === 'string' ? raw.avatarUrl : undefined,
+      suitIcon,
+      isMember: raw.isMember ?? true,
+      totalPoints: Number(raw.totalPoints || 0),
+      careerWins: Number(raw.careerWins || 0),
+      careerKOs: Number(raw.careerKOs || 0),
+      gamesPlayed: Number(raw.gamesPlayed || 0),
+      highHandBadges: Number(raw.highHandBadges || 0),
+      hasDgCarryover: Boolean(raw.hasDgCarryover),
+    };
+  }
+
   // Fetch Players & Standings (supports both 'users' and legacy 'players' tables + local player profiles)
   static async getPlayers(): Promise<Player[]> {
     const playerOverrides = readOverrides<Player>(LOCAL_STORAGE_PLAYER_OVERRIDES_KEY);
-    const mergePlayers = (base: Player[]): Player[] => {
+    const mergePlayers = (base: (Partial<Player> & { $id: string })[]): Player[] => {
       const byId = new Map<string, Player>();
-      for (const p of base) {
-        byId.set(p.$id, playerOverrides[p.$id] ? { ...p, ...playerOverrides[p.$id] } : p);
+      for (const raw of base) {
+        if (!raw || !raw.$id) continue;
+        const normalized = this.normalizePlayer(raw);
+        const override = playerOverrides[raw.$id];
+        byId.set(
+          raw.$id,
+          override ? this.normalizePlayer({ ...normalized, ...override, $id: raw.$id }) : normalized
+        );
       }
       for (const [id, override] of Object.entries(playerOverrides)) {
         if (!byId.has(id) && override.name) {
-          byId.set(id, {
-            $id: id,
-            name: override.name,
-            nickname: override.nickname,
-            email: override.email || '',
-            role: override.role || 'player',
-            suitIcon: override.suitIcon || 'spades',
-            isMember: override.isMember ?? true,
-            totalPoints: override.totalPoints ?? 0,
-            careerWins: override.careerWins ?? 0,
-            careerKOs: override.careerKOs ?? 0,
-            gamesPlayed: override.gamesPlayed ?? 0,
-            highHandBadges: override.highHandBadges ?? 0,
-            hasDgCarryover: override.hasDgCarryover ?? false,
-          });
+          byId.set(id, this.normalizePlayer({ ...override, $id: id }));
         }
       }
       return Array.from(byId.values());
@@ -666,7 +774,9 @@ export class AppwriteService {
       const items = await resilientListRows(tableId);
       if (items !== null) {
         setResolvedPlayersTable(tableId);
-        return mergePlayers(items.length > 0 ? (items as unknown as Player[]) : mockPlayers);
+        return mergePlayers(
+          items.length > 0 ? (items as unknown as (Partial<Player> & { $id: string })[]) : mockPlayers
+        );
       }
     }
 
@@ -740,29 +850,215 @@ export class AppwriteService {
     return playerRecord;
   }
 
-  // Fetch Games with relational event, venue & season fallback parsing + local overrides
+  private static mapRawGameEntry(doc: any): GameEntry {
+    const knockouts = parseJsonArray<KnockoutCode>(doc.knockouts);
+    const handBonuses = parseJsonArray<HandBonusCode>(doc.handBonuses);
+    const kosCount = knockouts.length > 0 ? knockouts.length : Number(doc.kosCount || 0);
+    const isEliminated = Boolean(doc.isEliminated);
+    const status: GameEntryStatus =
+      doc.status === 'ACTIVE' || doc.status === 'ELIMINATED' || doc.status === 'MUCK'
+        ? doc.status
+        : isEliminated
+        ? 'ELIMINATED'
+        : 'ACTIVE';
+    const resolvedGameId =
+      typeof doc.game === 'object' && doc.game
+        ? doc.game.$id
+        : doc.game || doc.gameId || '';
+
+    return {
+      $id: doc.$id,
+      gameId: resolvedGameId,
+      playerId: typeof doc.player === 'object' && doc.player ? doc.player.$id : doc.player || doc.playerId || '',
+      playerName: (typeof doc.player === 'object' && doc.player?.name) ? doc.player.name : doc.playerName || '',
+      playerSuitIcon: (typeof doc.player === 'object' && doc.player?.suitIcon) ? doc.player.suitIcon : doc.playerSuitIcon || 'spades',
+      tableNumber: doc.tableNumber,
+      seatNumber: doc.seatNumber,
+      buyinsCount: doc.buyinsCount ?? 1,
+      rebuysCount: doc.rebuysCount ?? 0,
+      addonsCount: doc.addonsCount ?? 0,
+      status,
+      showUpAwarded: typeof doc.showUpAwarded === 'boolean' ? doc.showUpAwarded : undefined,
+      hasDgCarryover: Boolean(doc.hasDgCarryover),
+      earnedDgForNextGame: Boolean(doc.earnedDgForNextGame),
+      survivedRebuy: Boolean(doc.survivedRebuy),
+      rebuyOnly: Boolean(doc.rebuyOnly),
+      finishPosition: doc.finishPosition || undefined,
+      pointsAwarded: doc.pointsAwarded,
+      kosCount,
+      knockouts: knockouts.length > 0 ? knockouts : Array.from({ length: kosCount }, () => 'K' as KnockoutCode),
+      handBonuses,
+      eliminatedBySeat: doc.eliminatedBySeat || undefined,
+      knockedOutByPlayerId: doc.knockedOutByPlayerId || undefined,
+      knockedOutByPlayerName: doc.knockedOutByPlayerName || undefined,
+      calculatedBasePoints: doc.calculatedBasePoints,
+      calculatedFinalPoints: doc.calculatedFinalPoints,
+      isEliminated,
+    };
+  }
+
+  static async getAllGameEntries(): Promise<GameEntry[]> {
+    const entryOverrides = readOverrides<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY);
+    const applyOverrides = (list: GameEntry[]): GameEntry[] => {
+      const byId = new Map<string, GameEntry>();
+      for (const e of list) {
+        byId.set(e.$id, entryOverrides[e.$id] ? { ...e, ...entryOverrides[e.$id] } : e);
+      }
+      for (const [id, override] of Object.entries(entryOverrides)) {
+        if (!byId.has(id) && override.gameId && override.playerName) {
+          byId.set(id, {
+            $id: id,
+            gameId: override.gameId,
+            playerId: override.playerId || '',
+            playerName: override.playerName,
+            playerSuitIcon: override.playerSuitIcon || 'spades',
+            tableNumber: override.tableNumber ?? 1,
+            seatNumber: override.seatNumber ?? 1,
+            buyinsCount: override.buyinsCount ?? 1,
+            rebuysCount: override.rebuysCount ?? 0,
+            addonsCount: override.addonsCount ?? 0,
+            status: override.status || (override.isEliminated ? 'ELIMINATED' : 'ACTIVE'),
+            showUpAwarded: override.showUpAwarded,
+            hasDgCarryover: Boolean(override.hasDgCarryover),
+            earnedDgForNextGame: Boolean(override.earnedDgForNextGame),
+            survivedRebuy: Boolean(override.survivedRebuy),
+            rebuyOnly: Boolean(override.rebuyOnly),
+            finishPosition: override.finishPosition,
+            pointsAwarded: override.pointsAwarded ?? 0,
+            kosCount: override.kosCount ?? 0,
+            knockouts: override.knockouts || [],
+            handBonuses: override.handBonuses || [],
+            eliminatedBySeat: override.eliminatedBySeat,
+            knockedOutByPlayerId: override.knockedOutByPlayerId,
+            knockedOutByPlayerName: override.knockedOutByPlayerName,
+            calculatedBasePoints: override.calculatedBasePoints,
+            calculatedFinalPoints: override.calculatedFinalPoints,
+            isEliminated: Boolean(override.isEliminated),
+          });
+        }
+      }
+      return Array.from(byId.values());
+    };
+
+    const items = await resilientListRows(APPWRITE_TABLES.GAME_ENTRIES);
+    if (!items || items.length === 0) {
+      return applyOverrides(mockGameEntries);
+    }
+    return applyOverrides(items.map((doc: any) => this.mapRawGameEntry(doc)));
+  }
+
+  // Fetch Games with live entry counts derived directly from actual seated game_entries
   static async getGames(eventId?: string): Promise<Game[]> {
     const gameOverrides = readOverrides<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY);
-    const applyOverrides = (list: Game[]): Game[] =>
-      list.map((g) => (gameOverrides[g.$id] ? { ...g, ...gameOverrides[g.$id] } : g));
+    let deletedIds = new Set<string>();
+    try {
+      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_GAME_DELETED_KEY);
+      if (rawDeleted) {
+        const parsed = JSON.parse(rawDeleted);
+        if (Array.isArray(parsed)) deletedIds = new Set(parsed);
+      }
+    } catch {
+      // Ignore storage errors
+    }
 
-    const items = await resilientListRows(APPWRITE_TABLES.GAMES);
+    const applyOverrides = (list: Game[]): Game[] => {
+      const byId = new Map<string, Game>();
+      for (const g of list) {
+        if (deletedIds.has(g.$id)) continue;
+        byId.set(g.$id, gameOverrides[g.$id] ? { ...g, ...gameOverrides[g.$id] } : g);
+      }
+      // Also preserve locally-created games if Appwrite createRow was unavailable or offline
+      for (const [id, override] of Object.entries(gameOverrides)) {
+        if (deletedIds.has(id) || byId.has(id) || !override.title) continue;
+        byId.set(id, {
+          $id: id,
+          eventId: override.eventId || '',
+          seasonId: override.seasonId || '',
+          venueId: override.venueId || '',
+          venueName: override.venueName || '',
+          title: override.title,
+          scheduledAt: override.scheduledAt || '',
+          status: override.status || 'scheduled',
+          dealerName: override.dealerName || '',
+          dealers: override.dealers || [],
+          scribes: override.scribes || [],
+          pointMultiplier: normalizeMultiplier(override.pointMultiplier),
+          isDayGame: Boolean(override.isDayGame),
+          noGamePlayed: Boolean(override.noGamePlayed),
+          hodRule: override.hodRule || '',
+          hotHandDescription: override.hotHandDescription || '',
+          purpleCount: Number(override.purpleCount || 0),
+          buyinAmount: Number(override.buyinAmount || 0),
+          rebuyAmount: Number(override.rebuyAmount || 0),
+          addonAmount: Number(override.addonAmount || 0),
+          startingChips: Number(override.startingChips || 15000),
+          hotHandJackpot: Number(override.hotHandJackpot || 0),
+          totalPlayersCount: Number(override.totalPlayersCount || 0),
+          remainingPlayersCount: Number(override.remainingPlayersCount || 0),
+          totalEntriesCount: Number(override.totalEntriesCount || 0),
+          currentLevelIndex: Number(override.currentLevelIndex || 0),
+          secondsRemainingInLevel: Number(override.secondsRemainingInLevel || 1200),
+          blindSchedule:
+            override.blindSchedule && override.blindSchedule.length > 0
+              ? override.blindSchedule
+              : mockGames[0].blindSchedule,
+          isRecurring: Boolean(override.isRecurring),
+          recurrenceRule: override.recurrenceRule,
+          seriesId: override.seriesId,
+          rsvpPlayerIds: override.rsvpPlayerIds || [],
+        });
+      }
+      return Array.from(byId.values());
+    };
+
+    const [items, allEntries] = await Promise.all([
+      resilientListRows(APPWRITE_TABLES.GAMES),
+      this.getAllGameEntries(),
+    ]);
+
+    const entriesByGameId = new Map<string, GameEntry[]>();
+    for (const entry of allEntries) {
+      if (!entry.gameId) continue;
+      const bucket = entriesByGameId.get(entry.gameId);
+      if (bucket) bucket.push(entry);
+      else entriesByGameId.set(entry.gameId, [entry]);
+    }
+
+    const reconcileCounts = (list: Game[]): Game[] =>
+      list.map((g) => {
+        const gameEntries = entriesByGameId.get(g.$id) || [];
+        const totalPlayersCount = gameEntries.length;
+        const remainingPlayersCount = gameEntries.filter(
+          (e) => !e.isEliminated && e.status !== 'ELIMINATED' && e.status !== 'MUCK'
+        ).length;
+        const totalEntriesCount = gameEntries.reduce(
+          (sum, e) => sum + (e.buyinsCount || 1) + (e.rebuysCount || 0),
+          0
+        );
+        return {
+          ...g,
+          totalPlayersCount,
+          remainingPlayersCount,
+          totalEntriesCount,
+        };
+      });
+
     if (!items || items.length === 0) {
-      const merged = applyOverrides(mockGames);
+      const merged = reconcileCounts(applyOverrides(mockGames));
       if (eventId) return merged.filter((g) => g.eventId === eventId);
       return merged;
     }
 
-    const mapped: Game[] = applyOverrides(items.map((doc: any) => ({
+    const mapped: Game[] = reconcileCounts(applyOverrides(items.map((doc: any) => ({
       $id: doc.$id,
-      eventId: typeof doc.event === 'object' && doc.event ? doc.event.$id : doc.event || doc.eventId || 'event_sunday_showdown',
-      seasonId: typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || 'season_2026_crawl3',
-      venueId: typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || 'venue_single_barrel',
-      venueName: (typeof doc.venue === 'object' && doc.venue?.name) ? doc.venue.name : doc.venueName || 'Single Barrel',
-      title: doc.title,
-      scheduledAt: doc.scheduledAt,
-      status: doc.status,
-      dealerName: doc.dealerName,
+      eventId: typeof doc.event === 'object' && doc.event ? doc.event.$id : doc.event || doc.eventId || '',
+      seasonId: typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || '',
+      venueId: typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || '',
+      venueName: (typeof doc.venue === 'object' && doc.venue?.name) ? doc.venue.name : doc.venueName || '',
+      title: doc.title || 'Untitled Game',
+      scheduledAt: doc.scheduledAt || '',
+      status: doc.status || 'scheduled',
+      dealerName: doc.dealerName || '',
       dealers: parseJsonArray<string>(doc.dealers),
       scribes: parseJsonArray<string>(doc.scribes),
       pointMultiplier: normalizeMultiplier(doc.pointMultiplier),
@@ -770,15 +1066,15 @@ export class AppwriteService {
       noGamePlayed: Boolean(doc.noGamePlayed),
       hodRule: doc.hodRule || '',
       purpleCount: Number(doc.purpleCount || 0),
-      buyinAmount: doc.buyinAmount,
-      rebuyAmount: doc.rebuyAmount,
-      addonAmount: doc.addonAmount,
-      startingChips: doc.startingChips,
-      hotHandJackpot: doc.hotHandJackpot,
+      buyinAmount: Number(doc.buyinAmount || 0),
+      rebuyAmount: Number(doc.rebuyAmount || 0),
+      addonAmount: Number(doc.addonAmount || 0),
+      startingChips: Number(doc.startingChips || 15000),
+      hotHandJackpot: Number(doc.hotHandJackpot || 0),
       hotHandDescription: doc.hotHandDescription || '',
-      totalPlayersCount: doc.totalPlayersCount,
-      remainingPlayersCount: doc.remainingPlayersCount,
-      totalEntriesCount: doc.totalEntriesCount,
+      totalPlayersCount: doc.totalPlayersCount ?? 0,
+      remainingPlayersCount: doc.remainingPlayersCount ?? 0,
+      totalEntriesCount: doc.totalEntriesCount ?? 0,
       currentLevelIndex: doc.currentLevelIndex || 0,
       secondsRemainingInLevel: doc.secondsRemainingInLevel || 1200,
       blindSchedule: mockGames[0].blindSchedule,
@@ -786,7 +1082,7 @@ export class AppwriteService {
       recurrenceRule: doc.recurrenceRule,
       seriesId: doc.seriesId,
       rsvpPlayerIds: parseJsonArray<string>(doc.rsvpPlayerIds),
-    })));
+    }))));
 
     if (eventId) return mapped.filter((g) => g.eventId === eventId);
     return mapped;
@@ -830,91 +1126,464 @@ export class AppwriteService {
 
   // Fetch Game Entries strictly scoped to a specific Game ID
   static async getGameEntries(gameId: string): Promise<GameEntry[]> {
-    const entryOverrides = readOverrides<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY);
-    const applyOverrides = (list: GameEntry[]): GameEntry[] =>
-      list.map((e) => (entryOverrides[e.$id] ? { ...e, ...entryOverrides[e.$id] } : e));
+    const allEntries = await this.getAllGameEntries();
+    return allEntries.filter((entry) => entry.gameId === gameId);
+  }
 
-    const filterLocalEntries = () =>
-      applyOverrides(mockGameEntries.filter((ge) => ge.gameId === gameId));
-
-    const items = await resilientListRows(APPWRITE_TABLES.GAME_ENTRIES);
-    if (!items || items.length === 0) {
-      return filterLocalEntries();
+  // Fetch Announcements (merged with local overrides and deletions)
+  static async getAnnouncements(): Promise<Announcement[]> {
+    const overrides = readOverrides<Announcement>(LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY);
+    let deletedIds = new Set<string>();
+    try {
+      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY);
+      if (rawDeleted) {
+        const parsed = JSON.parse(rawDeleted);
+        if (Array.isArray(parsed)) deletedIds = new Set(parsed);
+      }
+    } catch {
+      // Ignore storage errors
     }
 
-    const mapped: GameEntry[] = items.map((doc: any) => {
-      const knockouts = parseJsonArray<KnockoutCode>(doc.knockouts);
-      const handBonuses = parseJsonArray<HandBonusCode>(doc.handBonuses);
-      const kosCount = knockouts.length > 0 ? knockouts.length : Number(doc.kosCount || 0);
-      const isEliminated = Boolean(doc.isEliminated);
-      const status: GameEntryStatus =
-        doc.status === 'ACTIVE' || doc.status === 'ELIMINATED' || doc.status === 'MUCK'
-          ? doc.status
-          : isEliminated
-          ? 'ELIMINATED'
-          : 'ACTIVE';
-      const resolvedGameId =
-        typeof doc.game === 'object' && doc.game
-          ? doc.game.$id
-          : doc.game || doc.gameId || '';
+    const mergeList = (base: Announcement[]): Announcement[] => {
+      const byId = new Map<string, Announcement>();
+      for (const ann of base) {
+        if (deletedIds.has(ann.$id)) continue;
+        byId.set(ann.$id, overrides[ann.$id] ? { ...ann, ...overrides[ann.$id] } : ann);
+      }
+      for (const [id, override] of Object.entries(overrides)) {
+        if (deletedIds.has(id)) continue;
+        if (!byId.has(id) && override.title) {
+          byId.set(id, {
+            $id: id,
+            title: override.title,
+            content: override.content || '',
+            type: override.type || 'info',
+            isActive: override.isActive ?? true,
+            createdAt: override.createdAt || new Date().toISOString(),
+          });
+        }
+      }
+      return Array.from(byId.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    };
 
-      return {
-        $id: doc.$id,
-        gameId: resolvedGameId,
-        playerId: typeof doc.player === 'object' && doc.player ? doc.player.$id : doc.player || doc.playerId || '',
-        playerName: (typeof doc.player === 'object' && doc.player?.name) ? doc.player.name : doc.playerName || '',
-        playerSuitIcon: (typeof doc.player === 'object' && doc.player?.suitIcon) ? doc.player.suitIcon : doc.playerSuitIcon || 'spades',
-        tableNumber: doc.tableNumber,
-        seatNumber: doc.seatNumber,
-        buyinsCount: doc.buyinsCount,
-        rebuysCount: doc.rebuysCount,
-        addonsCount: doc.addonsCount,
-        status,
-        hasDgCarryover: Boolean(doc.hasDgCarryover),
-        earnedDgForNextGame: Boolean(doc.earnedDgForNextGame),
-        survivedRebuy: Boolean(doc.survivedRebuy),
-        rebuyOnly: Boolean(doc.rebuyOnly),
-        finishPosition: doc.finishPosition || undefined,
-        pointsAwarded: doc.pointsAwarded,
-        kosCount,
-        knockouts: knockouts.length > 0 ? knockouts : Array.from({ length: kosCount }, () => 'K' as KnockoutCode),
-        handBonuses,
-        eliminatedBySeat: doc.eliminatedBySeat || undefined,
-        knockedOutByPlayerId: doc.knockedOutByPlayerId || undefined,
-        knockedOutByPlayerName: doc.knockedOutByPlayerName || undefined,
-        calculatedBasePoints: doc.calculatedBasePoints,
-        calculatedFinalPoints: doc.calculatedFinalPoints,
-        isEliminated,
-      };
-    });
-
-    const scoped = applyOverrides(mapped.filter((entry) => entry.gameId === gameId));
-    if (scoped.length > 0) return scoped;
-
-    // If this game exists only in local seed/session data or has no remote rows yet
-    return filterLocalEntries();
-  }
-
-  // Fetch Announcements
-  static async getAnnouncements(): Promise<Announcement[]> {
     const items = await resilientListRows(APPWRITE_TABLES.ANNOUNCEMENTS);
-    return items && items.length > 0 ? (items as unknown as Announcement[]) : mockAnnouncements;
+    const source = items && items.length > 0 ? (items as unknown as Announcement[]) : mockAnnouncements;
+    return mergeList(source);
   }
 
-  // Fetch Current Hot Hand Jackpot
-  static async getHotHandJackpot(): Promise<HotHandJackpot> {
-    if (!isAppwriteConfigured || getMissingTables().has(APPWRITE_TABLES.HOT_HANDS)) {
-      return mockHotHandJackpot;
+  static async createAnnouncement(
+    data: Omit<Announcement, '$id' | 'createdAt'>
+  ): Promise<Announcement> {
+    const newId = ID.unique();
+    const createdAt = new Date().toISOString();
+    const payload: Record<string, unknown> = {
+      title: data.title,
+      content: data.content,
+      type: data.type,
+      isActive: data.isActive ?? true,
+      createdAt,
+    };
+
+    let createdId = newId;
+    if (isAppwriteConfigured) {
+      const remoteId = await resilientCreateRow(APPWRITE_TABLES.ANNOUNCEMENTS, newId, payload);
+      if (remoteId) createdId = remoteId;
+    }
+
+    const created: Announcement = {
+      $id: createdId,
+      title: data.title,
+      content: data.content,
+      type: data.type,
+      isActive: data.isActive ?? true,
+      createdAt,
+    };
+    mockAnnouncements.unshift(created);
+    saveOverride<Announcement>(LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY, createdId, created);
+    return created;
+  }
+
+  static async updateAnnouncement(
+    announcementId: string,
+    updates: Partial<Announcement>
+  ): Promise<boolean> {
+    const idx = mockAnnouncements.findIndex((a) => a.$id === announcementId);
+    if (idx !== -1) {
+      mockAnnouncements[idx] = { ...mockAnnouncements[idx], ...updates };
+    }
+    saveOverride<Announcement>(LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY, announcementId, updates);
+
+    if (!isAppwriteConfigured) return true;
+    const payload: Record<string, unknown> = {};
+    if (updates.title !== undefined) payload.title = updates.title;
+    if (updates.content !== undefined) payload.content = updates.content;
+    if (updates.type !== undefined) payload.type = updates.type;
+    if (updates.isActive !== undefined) payload.isActive = updates.isActive;
+
+    await resilientUpdateRow(APPWRITE_TABLES.ANNOUNCEMENTS, announcementId, payload);
+    return true;
+  }
+
+  static async deleteAnnouncement(announcementId: string): Promise<boolean> {
+    const idx = mockAnnouncements.findIndex((a) => a.$id === announcementId);
+    if (idx !== -1) {
+      mockAnnouncements.splice(idx, 1);
     }
     try {
-      const response = await tablesDb.getRow(DATABASE_ID, APPWRITE_TABLES.HOT_HANDS, mockHotHandJackpot.$id);
-      return response as unknown as HotHandJackpot;
-    } catch (err: unknown) {
-      if (isTableNotFoundError(err)) {
-        markTableMissing(APPWRITE_TABLES.HOT_HANDS);
+      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY);
+      const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+      if (!parsed.includes(announcementId)) {
+        parsed.push(announcementId);
+        localStorage.setItem(LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY, JSON.stringify(parsed));
       }
-      return mockHotHandJackpot;
+    } catch {
+      // Ignore storage errors
     }
+
+    if (isAppwriteConfigured && !getMissingTables().has(APPWRITE_TABLES.ANNOUNCEMENTS)) {
+      try {
+        await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.ANNOUNCEMENTS, announcementId);
+      } catch {
+        // Already deleted or local-only
+      }
+    }
+    return true;
+  }
+
+  // Fetch Current Hot Hand Target (lists rows so Appwrite-generated $id works)
+  static async getHotHandJackpot(): Promise<HotHandJackpot> {
+    const items = await resilientListRows(APPWRITE_TABLES.HOT_HANDS);
+    if (items && items.length > 0) {
+      return items[0] as unknown as HotHandJackpot;
+    }
+    return mockHotHandJackpot;
+  }
+
+  /**
+   * Clears all local browser caches/overrides and schema caches so fresh Appwrite data loads cleanly.
+   */
+  static clearLocalCaches(): void {
+    const localKeys = [
+      LOCAL_STORAGE_LEAGUES_KEY,
+      LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY,
+      LOCAL_STORAGE_VENUE_OVERRIDES_KEY,
+      LOCAL_STORAGE_VENUE_DELETED_KEY,
+      LOCAL_STORAGE_PLAYER_OVERRIDES_KEY,
+      LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY,
+      LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY,
+      LOCAL_STORAGE_GAME_OVERRIDES_KEY,
+      LOCAL_STORAGE_GAME_DELETED_KEY,
+      LOCAL_STORAGE_ENTRY_OVERRIDES_KEY,
+      'holdem_active_league_id',
+      'holdem_all_users',
+    ];
+    for (const key of localKeys) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // Ignore storage errors
+      }
+    }
+    knownTableColumns.clear();
+    knownUnsupportedColumns.clear();
+    missingTablesCache = null;
+    resolvedPlayersTableCache = undefined;
+    try {
+      sessionStorage.removeItem(SESSION_UNSUPPORTED_COLS_KEY);
+      sessionStorage.removeItem(SESSION_MISSING_TABLES_KEY);
+      sessionStorage.removeItem(SESSION_PLAYERS_TABLE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+  }
+
+  /**
+   * Clears all rows from every Appwrite table (child-first) and re-seeds fresh
+   * "Jack Ten Poker" league data letting Appwrite generate every $id via ID.unique().
+   */
+  static async clearAndReseedAppwrite(
+    actorRole?: UserRole,
+    onProgress?: (status: string) => void
+  ): Promise<{ deletedRows: number; seededRows: number; usedAppwrite: boolean }> {
+    if (actorRole !== 'admin') {
+      throw new Error('Unauthorized: Only App Admins (role: admin) can clear and re-seed data.');
+    }
+
+    this.clearLocalCaches();
+
+    if (!isAppwriteConfigured) {
+      onProgress?.('Reset local demo caches to fresh Jack Ten Poker seed data.');
+      return { deletedRows: 0, seededRows: 0, usedAppwrite: false };
+    }
+
+    let deletedRows = 0;
+    const deleteOrder = [
+      APPWRITE_TABLES.GAME_ENTRIES,
+      APPWRITE_TABLES.GAMES,
+      APPWRITE_TABLES.EVENTS,
+      APPWRITE_TABLES.ANNOUNCEMENTS,
+      APPWRITE_TABLES.HOT_HANDS,
+      APPWRITE_TABLES.USERS,
+      'players',
+      APPWRITE_TABLES.VENUES,
+      APPWRITE_TABLES.SEASONS,
+      APPWRITE_TABLES.LEAGUES,
+    ];
+
+    // 1. Clear all rows across every table
+    for (const tableId of deleteOrder) {
+      onProgress?.(`Clearing "${tableId}"...`);
+      while (true) {
+        let rows: any[] = [];
+        try {
+          const response = await tablesDb.listRows(DATABASE_ID, tableId, [Query.limit(100)]);
+          rows = (response as any).rows || (response as any).documents || [];
+          recordTableColumns(tableId, rows);
+        } catch (err: unknown) {
+          if (isTableNotFoundError(err)) {
+            markTableMissing(tableId);
+          }
+          break;
+        }
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          try {
+            await tablesDb.deleteRow(DATABASE_ID, tableId, row.$id);
+            deletedRows += 1;
+          } catch {
+            // Skip rows that cannot be deleted
+          }
+        }
+        if (rows.length < 100) break;
+      }
+    }
+
+    // Determine which players table exists ('users' vs legacy 'players')
+    const playersTable = !getMissingTables().has(APPWRITE_TABLES.USERS)
+      ? APPWRITE_TABLES.USERS
+      : !getMissingTables().has('players')
+      ? 'players'
+      : null;
+    if (playersTable) {
+      setResolvedPlayersTable(playersTable);
+    }
+
+    let seededRows = 0;
+    const leagueIdMap = new Map<string, string>();
+    const seasonIdMap = new Map<string, string>();
+    const venueIdMap = new Map<string, string>();
+    const playerIdMap = new Map<string, string>();
+    const eventIdMap = new Map<string, string>();
+    const gameIdMap = new Map<string, string>();
+
+    // 2. Seed League (Appwrite generates $id)
+    onProgress?.('Seeding league "Jack Ten Poker"...');
+    let primaryLeagueId = '';
+    const createdLeagueId = await resilientCreateRow(APPWRITE_TABLES.LEAGUES, ID.unique(), {
+      name: mockLeague.name,
+      description: mockLeague.description,
+      logoUrl: mockLeague.logoUrl || '',
+      ownerId: mockLeague.ownerId,
+      managerId: mockLeague.managerId || '',
+      managerName: mockLeague.managerName || '',
+      managerEmail: mockLeague.managerEmail || '',
+      createdAt: mockLeague.createdAt,
+    });
+    if (createdLeagueId) {
+      primaryLeagueId = createdLeagueId;
+      leagueIdMap.set(mockLeague.$id, createdLeagueId);
+      seededRows += 1;
+    }
+
+    // 3. Seed Seasons
+    onProgress?.('Seeding seasons...');
+    for (const s of mockSeasons) {
+      const id = await resilientCreateRow(APPWRITE_TABLES.SEASONS, ID.unique(), {
+        name: s.name,
+        startDate: s.startDate,
+        endDate: s.endDate,
+        isActive: s.isActive,
+        league: leagueIdMap.get(s.leagueId) || primaryLeagueId,
+      });
+      if (id) {
+        seasonIdMap.set(s.$id, id);
+        seededRows += 1;
+      }
+    }
+
+    // 4. Seed Venues
+    onProgress?.('Seeding host venues...');
+    for (const venue of mockVenues) {
+      const id = await resilientCreateRow(APPWRITE_TABLES.VENUES, ID.unique(), {
+        name: venue.name,
+        address: venue.address,
+        phone: venue.phone,
+        website: venue.website || '',
+        imageUrl: venue.imageUrl || '',
+        league: leagueIdMap.get(venue.leagueId) || primaryLeagueId,
+      });
+      if (id) {
+        venueIdMap.set(venue.$id, id);
+        seededRows += 1;
+      }
+    }
+
+    // 5. Seed Players / Users
+    if (playersTable) {
+      onProgress?.('Seeding players...');
+      for (const user of mockPlayers) {
+        const id = await resilientCreateRow(playersTable, ID.unique(), {
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          nickname: user.nickname || '',
+          suitIcon: user.suitIcon,
+          isMember: user.isMember,
+          totalPoints: user.totalPoints,
+          careerWins: user.careerWins,
+          careerKOs: user.careerKOs,
+          gamesPlayed: user.gamesPlayed,
+          highHandBadges: user.highHandBadges || 0,
+          hasDgCarryover: Boolean(user.hasDgCarryover),
+          league: primaryLeagueId,
+        });
+        if (id) {
+          playerIdMap.set(user.$id, id);
+          seededRows += 1;
+        }
+      }
+    }
+
+    // 6. Seed Events
+    onProgress?.('Seeding tournament events...');
+    for (const event of mockEvents) {
+      const id = await resilientCreateRow(APPWRITE_TABLES.EVENTS, ID.unique(), {
+        title: event.title,
+        description: event.description || '',
+        scheduledAt: event.scheduledAt,
+        status: event.status,
+        isRecurring: Boolean(event.isRecurring),
+        recurrenceRule: event.recurrenceRule || '',
+        seriesId: event.seriesId || '',
+        season: seasonIdMap.get(event.seasonId) || '',
+        venue: venueIdMap.get(event.venueId) || '',
+      });
+      if (id) {
+        eventIdMap.set(event.$id, id);
+        seededRows += 1;
+      }
+    }
+
+    // 7. Seed Games
+    onProgress?.('Seeding games & schedules...');
+    for (const game of mockGames) {
+      const mappedRsvps = (game.rsvpPlayerIds || [])
+        .map((pid) => playerIdMap.get(pid))
+        .filter((id): id is string => Boolean(id));
+
+      const id = await resilientCreateRow(APPWRITE_TABLES.GAMES, ID.unique(), {
+        title: game.title,
+        scheduledAt: game.scheduledAt,
+        status: game.status,
+        dealerName: game.dealerName || '',
+        dealers: JSON.stringify(game.dealers || (game.dealerName ? [game.dealerName] : [])),
+        scribes: JSON.stringify(game.scribes || []),
+        pointMultiplier: game.pointMultiplier || 1,
+        isDayGame: Boolean(game.isDayGame),
+        noGamePlayed: Boolean(game.noGamePlayed),
+        hodRule: game.hodRule || '',
+        hotHandDescription: game.hotHandDescription || '',
+        purpleCount: game.purpleCount || 0,
+        buyinAmount: game.buyinAmount,
+        rebuyAmount: game.rebuyAmount,
+        addonAmount: game.addonAmount,
+        startingChips: game.startingChips,
+        hotHandJackpot: game.hotHandJackpot || 0,
+        totalPlayersCount: game.totalPlayersCount,
+        remainingPlayersCount: game.remainingPlayersCount,
+        totalEntriesCount: game.totalEntriesCount,
+        currentLevelIndex: game.currentLevelIndex || 0,
+        secondsRemainingInLevel: game.secondsRemainingInLevel || 1200,
+        rsvpPlayerIds: JSON.stringify(mappedRsvps),
+        seasonId: seasonIdMap.get(game.seasonId) || '',
+        venueId: venueIdMap.get(game.venueId) || '',
+        venueName: game.venueName,
+        event: eventIdMap.get(game.eventId) || '',
+      });
+      if (id) {
+        gameIdMap.set(game.$id, id);
+        seededRows += 1;
+      }
+    }
+
+    // 8. Seed Game Entries
+    onProgress?.('Seeding game entries...');
+    for (const entry of mockGameEntries) {
+      const gameRef = gameIdMap.get(entry.gameId);
+      const playerRef = playerIdMap.get(entry.playerId);
+      if (!gameRef) continue;
+
+      const id = await resilientCreateRow(APPWRITE_TABLES.GAME_ENTRIES, ID.unique(), {
+        playerName: entry.playerName,
+        playerSuitIcon: entry.playerSuitIcon,
+        tableNumber: entry.tableNumber,
+        seatNumber: entry.seatNumber,
+        buyinsCount: entry.buyinsCount,
+        rebuysCount: entry.rebuysCount,
+        addonsCount: entry.addonsCount,
+        status: entry.status || (entry.isEliminated ? 'ELIMINATED' : 'ACTIVE'),
+        ...(typeof entry.showUpAwarded === 'boolean' ? { showUpAwarded: entry.showUpAwarded } : {}),
+        hasDgCarryover: Boolean(entry.hasDgCarryover),
+        earnedDgForNextGame: Boolean(entry.earnedDgForNextGame),
+        survivedRebuy: Boolean(entry.survivedRebuy),
+        rebuyOnly: Boolean(entry.rebuyOnly),
+        finishPosition: entry.finishPosition || 0,
+        pointsAwarded: entry.pointsAwarded || 0,
+        kosCount: entry.kosCount,
+        knockouts: JSON.stringify(entry.knockouts || []),
+        handBonuses: JSON.stringify(entry.handBonuses || []),
+        eliminatedBySeat: entry.eliminatedBySeat || 0,
+        knockedOutByPlayerId: entry.knockedOutByPlayerId
+          ? playerIdMap.get(entry.knockedOutByPlayerId) || ''
+          : '',
+        knockedOutByPlayerName: entry.knockedOutByPlayerName || '',
+        calculatedBasePoints: entry.calculatedBasePoints || 0,
+        calculatedFinalPoints: entry.calculatedFinalPoints || 0,
+        isEliminated: entry.isEliminated,
+        game: gameRef,
+        ...(playerRef ? { player: playerRef } : {}),
+      });
+      if (id) seededRows += 1;
+    }
+
+    // 9. Seed Hot Hand Target
+    onProgress?.('Seeding daily hot hand target...');
+    const hotHandId = await resilientCreateRow(APPWRITE_TABLES.HOT_HANDS, ID.unique(), {
+      date: mockHotHandJackpot.date,
+      handTitle: mockHotHandJackpot.handTitle,
+      currentPool: mockHotHandJackpot.currentPool,
+      isClaimed: mockHotHandJackpot.isClaimed,
+      league: primaryLeagueId,
+    });
+    if (hotHandId) seededRows += 1;
+
+    // 10. Seed Announcements
+    onProgress?.('Seeding banner announcements...');
+    for (const ann of mockAnnouncements) {
+      const id = await resilientCreateRow(APPWRITE_TABLES.ANNOUNCEMENTS, ID.unique(), {
+        title: ann.title,
+        content: ann.content,
+        type: ann.type,
+        isActive: ann.isActive ?? true,
+        createdAt: ann.createdAt,
+      });
+      if (id) seededRows += 1;
+    }
+
+    onProgress?.('Re-seed complete!');
+    return { deletedRows, seededRows, usedAppwrite: true };
   }
 
   // --- MUTATION METHODS ---
@@ -998,67 +1667,169 @@ export class AppwriteService {
   }
 
   // ==========================================
-  // --- VENUE CRUD METHODS ---
+  // --- VENUE CRUD & IMAGE STORAGE METHODS ---
   // ==========================================
+
+  private static compressImageToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read selected image file.'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Invalid image file.'));
+        img.onload = () => {
+          const maxDim = 800;
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const width = Math.max(1, Math.round(img.width * scale));
+          const height = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(String(reader.result || ''));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
+        };
+        img.src = String(reader.result || '');
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  static async uploadVenueImage(
+    file: File
+  ): Promise<{ url: string; fileId?: string; source: 'appwrite' | 'local'; warning?: string }> {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(file.type)) {
+      throw new Error('Please upload a JPG, PNG, WebP, or GIF image.');
+    }
+    const maxBytes = 5 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error('Image must be 5 MB or smaller.');
+    }
+
+    if (isAppwriteConfigured) {
+      try {
+        const uploaded = await storage.createFile(VENUE_IMAGES_BUCKET_ID, ID.unique(), file);
+        const viewUrl = String(storage.getFileView(VENUE_IMAGES_BUCKET_ID, uploaded.$id));
+        return { url: viewUrl, fileId: uploaded.$id, source: 'appwrite' };
+      } catch (err: unknown) {
+        const msg =
+          typeof err === 'object' && err !== null && 'message' in err
+            ? String((err as { message?: unknown }).message ?? '')
+            : '';
+        const localDataUrl = await this.compressImageToDataUrl(file);
+        return {
+          url: localDataUrl,
+          source: 'local',
+          warning: /bucket/i.test(msg)
+            ? `Storage bucket "${VENUE_IMAGES_BUCKET_ID}" is not created in Appwrite yet — saved locally for now. Run npm run setup:appwrite to provision it.`
+            : 'Appwrite Storage upload unavailable — saved locally for now.',
+        };
+      }
+    }
+
+    const localDataUrl = await this.compressImageToDataUrl(file);
+    return { url: localDataUrl, source: 'local' };
+  }
+
+  static async deleteVenueImage(imageUrl?: string): Promise<void> {
+    if (!isAppwriteConfigured || !imageUrl) return;
+    const match = imageUrl.match(
+      new RegExp(`/buckets/${VENUE_IMAGES_BUCKET_ID}/files/([^/]+)/`)
+    );
+    if (!match?.[1]) return;
+    try {
+      await storage.deleteFile(VENUE_IMAGES_BUCKET_ID, match[1]);
+    } catch {
+      // Ignore already-deleted or permission-restricted files
+    }
+  }
 
   static async createVenue(venueData: Omit<Venue, '$id'>): Promise<Venue> {
     const newId = ID.unique();
-    const payload = {
+    const payload: Record<string, unknown> = {
       name: venueData.name,
       address: venueData.address,
       phone: venueData.phone,
       website: venueData.website || '',
       imageUrl: venueData.imageUrl || '',
-      league: mockLeague.$id,
+      league: venueData.leagueId || mockLeague.$id,
     };
 
+    let createdId = newId;
     if (isAppwriteConfigured) {
-      try {
-        const res = await tablesDb.createRow(DATABASE_ID, APPWRITE_TABLES.VENUES, newId, payload);
-        return {
-          $id: res.$id || newId,
-          leagueId: mockLeague.$id,
-          ...payload,
-        } as Venue;
-      } catch (e) {
-        console.warn('Appwrite createVenue failed, returning local instance:', e);
-      }
+      const remoteId = await resilientCreateRow(APPWRITE_TABLES.VENUES, newId, payload);
+      if (remoteId) createdId = remoteId;
     }
 
-    return {
-      $id: newId,
-      leagueId: mockLeague.$id,
-      ...payload,
-    } as Venue;
+    const created: Venue = {
+      $id: createdId,
+      leagueId: venueData.leagueId || mockLeague.$id,
+      name: venueData.name,
+      address: venueData.address,
+      phone: venueData.phone,
+      website: venueData.website || '',
+      imageUrl: venueData.imageUrl || '',
+    };
+    saveOverride<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY, createdId, created);
+    return created;
   }
 
   static async updateVenue(venueId: string, updates: Partial<Venue>): Promise<boolean> {
-    if (!isAppwriteConfigured) return true;
-    try {
-      const payload: Record<string, any> = {};
-      if (updates.name !== undefined) payload.name = updates.name;
-      if (updates.address !== undefined) payload.address = updates.address;
-      if (updates.phone !== undefined) payload.phone = updates.phone;
-      if (updates.website !== undefined) payload.website = updates.website;
-      if (updates.imageUrl !== undefined) payload.imageUrl = updates.imageUrl;
-
-      await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.VENUES, venueId, payload);
-      return true;
-    } catch (e) {
-      console.error('Failed to update venue in Appwrite:', e);
-      return false;
+    saveOverride<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY, venueId, updates);
+    const idx = mockVenues.findIndex((v) => v.$id === venueId);
+    if (idx !== -1) {
+      mockVenues[idx] = { ...mockVenues[idx], ...updates };
     }
+
+    if (!isAppwriteConfigured) return true;
+    const payload: Record<string, unknown> = {};
+    if (updates.name !== undefined) payload.name = updates.name;
+    if (updates.address !== undefined) payload.address = updates.address;
+    if (updates.phone !== undefined) payload.phone = updates.phone;
+    if (updates.website !== undefined) payload.website = updates.website;
+    if (updates.imageUrl !== undefined) payload.imageUrl = updates.imageUrl;
+
+    const updated = await resilientUpdateRow(APPWRITE_TABLES.VENUES, venueId, payload);
+    if (!updated) {
+      const seed = mockVenues.find((v) => v.$id === venueId);
+      const createPayload: Record<string, unknown> = {
+        name: updates.name ?? seed?.name ?? '',
+        address: updates.address ?? seed?.address ?? '',
+        phone: updates.phone ?? seed?.phone ?? '',
+        website: updates.website ?? seed?.website ?? '',
+        imageUrl: updates.imageUrl ?? seed?.imageUrl ?? '',
+        league: updates.leagueId ?? seed?.leagueId ?? mockLeague.$id,
+      };
+      await resilientCreateRow(APPWRITE_TABLES.VENUES, venueId, createPayload);
+    }
+    return true;
   }
 
   static async deleteVenue(venueId: string): Promise<boolean> {
-    if (!isAppwriteConfigured) return true;
     try {
-      await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.VENUES, venueId);
-      return true;
-    } catch (e) {
-      console.error('Failed to delete venue from Appwrite:', e);
-      return false;
+      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_VENUE_DELETED_KEY);
+      const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+      if (!parsed.includes(venueId)) {
+        parsed.push(venueId);
+        localStorage.setItem(LOCAL_STORAGE_VENUE_DELETED_KEY, JSON.stringify(parsed));
+      }
+    } catch {
+      // Ignore storage errors
     }
+
+    if (isAppwriteConfigured && !getMissingTables().has(APPWRITE_TABLES.VENUES)) {
+      try {
+        await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.VENUES, venueId);
+      } catch {
+        // Already deleted or local-only
+      }
+    }
+    return true;
   }
 
   // ==========================================
@@ -1254,13 +2025,28 @@ export class AppwriteService {
   }
 
   static async deleteGame(gameId: string): Promise<boolean> {
+    try {
+      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_GAME_DELETED_KEY);
+      const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+      if (!parsed.includes(gameId)) {
+        parsed.push(gameId);
+        localStorage.setItem(LOCAL_STORAGE_GAME_DELETED_KEY, JSON.stringify(parsed));
+      }
+      const overrides = readOverrides<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY);
+      if (overrides[gameId]) {
+        delete overrides[gameId];
+        localStorage.setItem(LOCAL_STORAGE_GAME_OVERRIDES_KEY, JSON.stringify(overrides));
+      }
+    } catch {
+      // Ignore storage errors
+    }
     if (!isAppwriteConfigured) return true;
     try {
       await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId);
       return true;
     } catch (e) {
       console.error('Failed to delete game from Appwrite:', e);
-      return false;
+      return true;
     }
   }
 
@@ -1276,6 +2062,8 @@ export class AppwriteService {
     currentGame: Game
   ): Promise<GameEntry> {
     const newId = ID.unique();
+    // Players seated after the 1:15 mark do not auto-receive Show Up points
+    const seatedAfterCutoff = hasReachedShowUpCutoff(currentGame);
     const baseEntry: GameEntry = {
       $id: newId,
       gameId,
@@ -1288,6 +2076,7 @@ export class AppwriteService {
       rebuysCount: 0,
       addonsCount: 0,
       status: 'ACTIVE',
+      showUpAwarded: seatedAfterCutoff ? false : undefined,
       hasDgCarryover: Boolean(player.hasDgCarryover),
       earnedDgForNextGame: false,
       survivedRebuy: false,
@@ -1317,6 +2106,7 @@ export class AppwriteService {
       rebuysCount: 0,
       addonsCount: 0,
       status: 'ACTIVE',
+      ...(seatedAfterCutoff ? { showUpAwarded: false } : {}),
       hasDgCarryover: Boolean(newEntry.hasDgCarryover),
       earnedDgForNextGame: false,
       survivedRebuy: false,
@@ -1365,6 +2155,7 @@ export class AppwriteService {
     if (!isAppwriteConfigured) return true;
     const payload: Record<string, unknown> = {};
     if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.showUpAwarded !== undefined) payload.showUpAwarded = updates.showUpAwarded;
     if (updates.isEliminated !== undefined) payload.isEliminated = updates.isEliminated;
     if (updates.hasDgCarryover !== undefined) payload.hasDgCarryover = updates.hasDgCarryover;
     if (updates.earnedDgForNextGame !== undefined) payload.earnedDgForNextGame = updates.earnedDgForNextGame;

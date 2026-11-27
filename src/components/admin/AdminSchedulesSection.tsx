@@ -223,8 +223,14 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
                     <strong className="text-amber-400">{game.isDayGame ? 'Day (DG)' : 'Standard'}</strong>
                   </div>
                   <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800/60">
-                    <span className="text-[10px] text-slate-400 block uppercase font-medium">Players</span>
-                    <strong className="text-white">{game.remainingPlayersCount} / {game.totalPlayersCount}</strong>
+                    <span className="text-[10px] text-slate-400 block uppercase font-medium">
+                      {game.status === 'scheduled' ? 'Seated' : 'Players'}
+                    </span>
+                    <strong className="text-white">
+                      {game.status === 'scheduled'
+                        ? game.totalPlayersCount
+                        : `${game.remainingPlayersCount} / ${game.totalPlayersCount}`}
+                    </strong>
                   </div>
                 </div>
 

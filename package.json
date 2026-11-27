@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "setup:appwrite": "tsx scripts/setupAppwrite.ts",
+    "reseed:appwrite": "tsx scripts/setupAppwrite.ts --reseed",
     "reset:appwrite": "tsx scripts/setupAppwrite.ts --reset",
     "bundle:site": "npm run build && tar -czf holdem-site.tar.gz -C dist ."
   },

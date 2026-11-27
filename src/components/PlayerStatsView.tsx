@@ -197,7 +197,7 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
         </div>
       </div>
 
-      {/* Game Points History Ledger (Lynkoid Breakdown) */}
+      {/* Game Points History Ledger (Jack Ten Poker Breakdown) */}
       <div className="glass-panel rounded-2xl p-5 border border-slate-800 space-y-4">
         <h2 className="text-lg font-bold text-white flex items-center gap-2">
           <Calendar className="w-5 h-5 text-amber-400" /> Recent Game Points History

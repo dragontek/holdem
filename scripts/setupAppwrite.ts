@@ -1,4 +1,4 @@
-import { Client, Databases, TablesDB, Permission, Role, RelationshipType, RelationMutate } from 'node-appwrite';
+import { Client, Databases, ID, Query, Storage, TablesDB, Permission, Role, RelationshipType, RelationMutate } from 'node-appwrite';
 import fs from 'fs';
 import path from 'path';
 import { 
@@ -51,6 +51,8 @@ if (apiKey) {
 
 const databases = new Databases(client);
 const tablesDb = new TablesDB(client);
+const storage = new Storage(client);
+const venueBucketId = process.env.VITE_APPWRITE_VENUE_BUCKET_ID || 'venue_images';
 
 // Column Helpers
 async function createStringCol(tableId: string, key: string, size: number = 255, required: boolean = false) {
@@ -111,9 +113,58 @@ async function createRelCol(
 }
 
 const shouldReset = process.argv.includes('--reset') || process.argv.includes('--drop') || process.argv.includes('--fresh');
+const shouldReseed = process.argv.includes('--reseed') || process.argv.includes('--clear');
 
 if (shouldReset) {
   console.log('⚡ RESET MODE ENABLED (--reset / --drop flag detected)');
+} else if (shouldReseed) {
+  console.log('🧹 RESEED MODE ENABLED (--reseed / --clear flag detected — clearing all rows before re-seeding)');
+}
+
+async function clearTableRows(tableId: string): Promise<number> {
+  let deleted = 0;
+  while (true) {
+    try {
+      const response = await tablesDb.listRows(databaseId, tableId, [Query.limit(100)]);
+      const rows = (response as any).rows || (response as any).documents || [];
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        try {
+          await tablesDb.deleteRow(databaseId, tableId, row.$id);
+          deleted += 1;
+        } catch (delErr: any) {
+          console.warn(`    ⚠️ Could not delete row ${tableId}/${row.$id}:`, delErr.message || delErr);
+        }
+      }
+      if (rows.length < 100) break;
+    } catch {
+      break;
+    }
+  }
+  return deleted;
+}
+
+async function clearAllData(): Promise<void> {
+  console.log('\n🧹 Clearing all existing rows across Appwrite tables...');
+  // Delete in child-first order to respect relational constraints
+  const deleteOrder = [
+    'game_entries',
+    'games',
+    'events',
+    'announcements',
+    'hot_hands',
+    'users',
+    'players',
+    'venues',
+    'seasons',
+    'leagues',
+  ];
+  for (const tableId of deleteOrder) {
+    const count = await clearTableRows(tableId);
+    if (count > 0) {
+      console.log(`  🗑️ Cleared ${count} row(s) from "${tableId}".`);
+    }
+  }
 }
 
 async function provisionDatabase() {
@@ -260,6 +311,7 @@ async function provisionDatabase() {
     await createIntCol('game_entries', 'rebuysCount');
     await createIntCol('game_entries', 'addonsCount');
     await createStringCol('game_entries', 'status', 30);
+    await createBoolCol('game_entries', 'showUpAwarded');
     await createBoolCol('game_entries', 'hasDgCarryover');
     await createBoolCol('game_entries', 'earnedDgForNextGame');
     await createBoolCol('game_entries', 'survivedRebuy');
@@ -286,9 +338,36 @@ async function provisionDatabase() {
     await createStringCol('announcements', 'title', 255);
     await createStringCol('announcements', 'content', 2000);
     await createStringCol('announcements', 'type', 50);
+    await createBoolCol('announcements', 'isActive');
     await createStringCol('announcements', 'createdAt', 255);
 
-    console.log('\n4. Provisioning Native Appwrite v2.0 Relationships...');
+    console.log('\n4. Provisioning Storage Buckets...');
+    try {
+      await storage.getBucket(venueBucketId);
+      console.log(`  - Storage bucket "${venueBucketId}" exists.`);
+    } catch {
+      try {
+        await storage.createBucket(
+          venueBucketId,
+          'Venue Images',
+          [
+            Permission.read(Role.any()),
+            Permission.create(Role.any()),
+            Permission.update(Role.any()),
+            Permission.delete(Role.any()),
+          ],
+          false,
+          true,
+          5 * 1024 * 1024,
+          ['jpg', 'jpeg', 'png', 'webp', 'gif']
+        );
+        console.log(`  ✅ Created storage bucket "${venueBucketId}".`);
+      } catch (bucketErr: any) {
+        console.error(`  ❌ Failed to create storage bucket "${venueBucketId}":`, bucketErr.message || bucketErr);
+      }
+    }
+
+    console.log('\n5. Provisioning Native Appwrite v2.0 Relationships...');
     
     // 1. League (1) <--> Seasons (N)
     await createRelCol('leagues', 'seasons', RelationshipType.OneToMany, true, 'seasons', 'league', RelationMutate.Cascade);
@@ -320,244 +399,312 @@ async function provisionDatabase() {
     console.log('\n⏳ Waiting 4 seconds for Appwrite column index builds...');
     await new Promise((resolve) => setTimeout(resolve, 4000));
 
-    console.log('\n5. Seeding Relational Rows (v2.0 TablesDB)...');
+    if (shouldReseed && !shouldReset) {
+      await clearAllData();
+    }
+
+    // In normal setup mode (neither --reset nor --reseed), avoid duplicating seed rows if leagues already exist
+    if (!shouldReset && !shouldReseed) {
+      try {
+        const existingLeagues = await tablesDb.listRows(databaseId, 'leagues', [Query.limit(1)]);
+        const existingRows = (existingLeagues as any).rows || (existingLeagues as any).documents || [];
+        if (existingRows.length > 0) {
+          console.log('\n✅ Database already contains seeded data. Use `npm run reseed:appwrite` to clear and re-seed with fresh Appwrite-generated IDs.');
+          return;
+        }
+      } catch {
+        // Proceed with seeding
+      }
+    }
+
+    console.log('\n6. Seeding Relational Rows with Appwrite-Generated IDs (ID.unique())...');
     const defaultPermissions = [
       Permission.read(Role.any()),
       Permission.update(Role.any()),
       Permission.delete(Role.any()),
     ];
-    
-    // Seed League
+
+    const leagueIdMap = new Map<string, string>();
+    const seasonIdMap = new Map<string, string>();
+    const venueIdMap = new Map<string, string>();
+    const playerIdMap = new Map<string, string>();
+    const eventIdMap = new Map<string, string>();
+    const gameIdMap = new Map<string, string>();
+
+    // Seed League (Appwrite generates $id via ID.unique())
+    let primaryLeagueId = '';
     try {
-      await tablesDb.createRow(databaseId, 'leagues', mockLeague.$id, {
-        name: mockLeague.name,
-        description: mockLeague.description,
-        logoUrl: mockLeague.logoUrl || '',
-        ownerId: mockLeague.ownerId,
-        managerId: mockLeague.managerId || '',
-        managerName: mockLeague.managerName || '',
-        managerEmail: mockLeague.managerEmail || '',
-        createdAt: mockLeague.createdAt,
-      }, defaultPermissions);
-      console.log('  ✅ Seeded League Row');
+      const createdLeague = await tablesDb.createRow(
+        databaseId,
+        'leagues',
+        ID.unique(),
+        {
+          name: mockLeague.name,
+          description: mockLeague.description,
+          logoUrl: mockLeague.logoUrl || '',
+          ownerId: mockLeague.ownerId,
+          managerId: mockLeague.managerId || '',
+          managerName: mockLeague.managerName || '',
+          managerEmail: mockLeague.managerEmail || '',
+          createdAt: mockLeague.createdAt,
+        },
+        defaultPermissions
+      );
+      primaryLeagueId = createdLeague.$id;
+      leagueIdMap.set(mockLeague.$id, primaryLeagueId);
+      console.log(`  ✅ Seeded League: ${mockLeague.name} ($id: ${primaryLeagueId})`);
     } catch (e: any) {
-      if (e.code === 409 || e.type === 'row_already_exists') {
-        console.log(`  - League row (${mockLeague.$id}) exists.`);
-      } else {
-        console.error(`  ❌ Failed to seed League:`, e.message || e);
-      }
+      console.error(`  ❌ Failed to seed League:`, e.message || e);
     }
 
     // Seed Seasons with league relationship
     for (const s of mockSeasons) {
       try {
-        await tablesDb.createRow(databaseId, 'seasons', s.$id, {
-          name: s.name,
-          startDate: s.startDate,
-          endDate: s.endDate,
-          isActive: s.isActive,
-          league: mockLeague.$id,
-        }, defaultPermissions);
-        console.log(`  ✅ Seeded Season: ${s.name} -> League(${mockLeague.$id})`);
+        const leagueRef = leagueIdMap.get(s.leagueId) || primaryLeagueId;
+        const created = await tablesDb.createRow(
+          databaseId,
+          'seasons',
+          ID.unique(),
+          {
+            name: s.name,
+            startDate: s.startDate,
+            endDate: s.endDate,
+            isActive: s.isActive,
+            league: leagueRef,
+          },
+          defaultPermissions
+        );
+        seasonIdMap.set(s.$id, created.$id);
+        console.log(`  ✅ Seeded Season: ${s.name} ($id: ${created.$id})`);
       } catch (e: any) {
-        if (e.code === 409 || e.type === 'row_already_exists') {
-          console.log(`  - Season (${s.name}) exists.`);
-        } else {
-          console.error(`  ❌ Failed to seed Season (${s.name}):`, e.message || e);
-        }
+        console.error(`  ❌ Failed to seed Season (${s.name}):`, e.message || e);
       }
     }
 
     // Seed Venues with league relationship
     for (const venue of mockVenues) {
       try {
-        await tablesDb.createRow(databaseId, 'venues', venue.$id, {
-          name: venue.name,
-          address: venue.address,
-          phone: venue.phone,
-          website: venue.website || '',
-          imageUrl: venue.imageUrl || '',
-          league: mockLeague.$id,
-        }, defaultPermissions);
-        console.log(`  ✅ Seeded Venue: ${venue.name} -> League(${mockLeague.$id})`);
+        const leagueRef = leagueIdMap.get(venue.leagueId) || primaryLeagueId;
+        const created = await tablesDb.createRow(
+          databaseId,
+          'venues',
+          ID.unique(),
+          {
+            name: venue.name,
+            address: venue.address,
+            phone: venue.phone,
+            website: venue.website || '',
+            imageUrl: venue.imageUrl || '',
+            league: leagueRef,
+          },
+          defaultPermissions
+        );
+        venueIdMap.set(venue.$id, created.$id);
+        console.log(`  ✅ Seeded Venue: ${venue.name} ($id: ${created.$id})`);
       } catch (e: any) {
-        if (e.code === 409 || e.type === 'row_already_exists') {
-          console.log(`  - Venue (${venue.name}) exists.`);
-        } else {
-          console.error(`  ❌ Failed to seed Venue (${venue.name}):`, e.message || e);
-        }
+        console.error(`  ❌ Failed to seed Venue (${venue.name}):`, e.message || e);
       }
     }
 
     // Seed Native Appwrite Users & Players
     for (const user of mockPlayers) {
       try {
-        await tablesDb.createRow(databaseId, 'users', user.$id, {
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          nickname: user.nickname || '',
-          suitIcon: user.suitIcon,
-          isMember: user.isMember,
-          totalPoints: user.totalPoints,
-          careerWins: user.careerWins,
-          careerKOs: user.careerKOs,
-          gamesPlayed: user.gamesPlayed,
-          highHandBadges: user.highHandBadges || 0,
-          hasDgCarryover: Boolean(user.hasDgCarryover),
-          league: mockLeague.$id,
-        }, defaultPermissions);
-        console.log(`  ✅ Seeded User/Player: ${user.name} (${user.role}) -> League(${mockLeague.$id})`);
+        const created = await tablesDb.createRow(
+          databaseId,
+          'users',
+          ID.unique(),
+          {
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            nickname: user.nickname || '',
+            suitIcon: user.suitIcon,
+            isMember: user.isMember,
+            totalPoints: user.totalPoints,
+            careerWins: user.careerWins,
+            careerKOs: user.careerKOs,
+            gamesPlayed: user.gamesPlayed,
+            highHandBadges: user.highHandBadges || 0,
+            hasDgCarryover: Boolean(user.hasDgCarryover),
+            league: primaryLeagueId,
+          },
+          defaultPermissions
+        );
+        playerIdMap.set(user.$id, created.$id);
+        console.log(`  ✅ Seeded User/Player: ${user.name} (${user.role}, $id: ${created.$id})`);
       } catch (e: any) {
-        if (e.code === 409 || e.type === 'row_already_exists') {
-          console.log(`  - User/Player (${user.name}) exists.`);
-        } else {
-          console.error(`  ❌ Failed to seed User/Player (${user.name}):`, e.message || e);
-        }
+        console.error(`  ❌ Failed to seed User/Player (${user.name}):`, e.message || e);
       }
     }
 
-    // Seed Events with season and venue relationships
+    // Seed Events with generated season and venue relationships
     for (const event of mockEvents) {
       try {
-        await tablesDb.createRow(databaseId, 'events', event.$id, {
-          title: event.title,
-          description: event.description || '',
-          scheduledAt: event.scheduledAt,
-          status: event.status,
-          isRecurring: Boolean(event.isRecurring),
-          recurrenceRule: event.recurrenceRule || '',
-          seriesId: event.seriesId || '',
-          season: event.seasonId,
-          venue: event.venueId,
-        }, defaultPermissions);
-        console.log(`  ✅ Seeded Event: ${event.title} -> Season(${event.seasonId}) & Venue(${event.venueId})`);
+        const seasonRef = seasonIdMap.get(event.seasonId) || '';
+        const venueRef = venueIdMap.get(event.venueId) || '';
+        const created = await tablesDb.createRow(
+          databaseId,
+          'events',
+          ID.unique(),
+          {
+            title: event.title,
+            description: event.description || '',
+            scheduledAt: event.scheduledAt,
+            status: event.status,
+            isRecurring: Boolean(event.isRecurring),
+            recurrenceRule: event.recurrenceRule || '',
+            seriesId: event.seriesId || '',
+            season: seasonRef,
+            venue: venueRef,
+          },
+          defaultPermissions
+        );
+        eventIdMap.set(event.$id, created.$id);
+        console.log(`  ✅ Seeded Event: ${event.title} ($id: ${created.$id})`);
       } catch (e: any) {
-        if (e.code === 409 || e.type === 'row_already_exists') {
-          console.log(`  - Event (${event.title}) exists.`);
-        } else {
-          console.error(`  ❌ Failed to seed Event (${event.title}):`, e.message || e);
-        }
+        console.error(`  ❌ Failed to seed Event (${event.title}):`, e.message || e);
       }
     }
 
-    // Seed Games with event, season and venue relationships
+    // Seed Games with generated event, season, venue, and RSVP player IDs
     for (const game of mockGames) {
       try {
-        await tablesDb.createRow(databaseId, 'games', game.$id, {
-          title: game.title,
-          scheduledAt: game.scheduledAt,
-          status: game.status,
-          dealerName: game.dealerName || '',
-          dealers: JSON.stringify(game.dealers || (game.dealerName ? [game.dealerName] : [])),
-          scribes: JSON.stringify(game.scribes || []),
-          pointMultiplier: game.pointMultiplier || 1,
-          isDayGame: Boolean(game.isDayGame),
-          noGamePlayed: Boolean(game.noGamePlayed),
-          hodRule: game.hodRule || '',
-          hotHandDescription: game.hotHandDescription || '',
-          purpleCount: game.purpleCount || 0,
-          buyinAmount: game.buyinAmount,
-          rebuyAmount: game.rebuyAmount,
-          addonAmount: game.addonAmount,
-          startingChips: game.startingChips,
-          hotHandJackpot: game.hotHandJackpot || 0,
-          totalPlayersCount: game.totalPlayersCount,
-          remainingPlayersCount: game.remainingPlayersCount,
-          totalEntriesCount: game.totalEntriesCount,
-          currentLevelIndex: game.currentLevelIndex || 0,
-          secondsRemainingInLevel: game.secondsRemainingInLevel || 1200,
-          rsvpPlayerIds: JSON.stringify(game.rsvpPlayerIds || []),
-          seasonId: game.seasonId,
-          venueId: game.venueId,
-          venueName: game.venueName,
-          event: game.eventId,
-        }, defaultPermissions);
-        console.log(`  ✅ Seeded Game: ${game.title} -> Event(${game.eventId})`);
+        const eventRef = eventIdMap.get(game.eventId) || '';
+        const seasonRef = seasonIdMap.get(game.seasonId) || '';
+        const venueRef = venueIdMap.get(game.venueId) || '';
+        const mappedRsvps = (game.rsvpPlayerIds || [])
+          .map((pid) => playerIdMap.get(pid))
+          .filter((id): id is string => Boolean(id));
+
+        const created = await tablesDb.createRow(
+          databaseId,
+          'games',
+          ID.unique(),
+          {
+            title: game.title,
+            scheduledAt: game.scheduledAt,
+            status: game.status,
+            dealerName: game.dealerName || '',
+            dealers: JSON.stringify(game.dealers || (game.dealerName ? [game.dealerName] : [])),
+            scribes: JSON.stringify(game.scribes || []),
+            pointMultiplier: game.pointMultiplier || 1,
+            isDayGame: Boolean(game.isDayGame),
+            noGamePlayed: Boolean(game.noGamePlayed),
+            hodRule: game.hodRule || '',
+            hotHandDescription: game.hotHandDescription || '',
+            purpleCount: game.purpleCount || 0,
+            buyinAmount: game.buyinAmount,
+            rebuyAmount: game.rebuyAmount,
+            addonAmount: game.addonAmount,
+            startingChips: game.startingChips,
+            hotHandJackpot: game.hotHandJackpot || 0,
+            totalPlayersCount: game.totalPlayersCount,
+            remainingPlayersCount: game.remainingPlayersCount,
+            totalEntriesCount: game.totalEntriesCount,
+            currentLevelIndex: game.currentLevelIndex || 0,
+            secondsRemainingInLevel: game.secondsRemainingInLevel || 1200,
+            rsvpPlayerIds: JSON.stringify(mappedRsvps),
+            seasonId: seasonRef,
+            venueId: venueRef,
+            venueName: game.venueName,
+            event: eventRef,
+          },
+          defaultPermissions
+        );
+        gameIdMap.set(game.$id, created.$id);
+        console.log(`  ✅ Seeded Game: ${game.title} ($id: ${created.$id})`);
       } catch (e: any) {
-        if (e.code === 409 || e.type === 'row_already_exists') {
-          console.log(`  - Game (${game.title}) exists.`);
-        } else {
-          console.error(`  ❌ Failed to seed Game (${game.title}):`, e.message || e);
-        }
+        console.error(`  ❌ Failed to seed Game (${game.title}):`, e.message || e);
       }
     }
 
-    // Seed Game Entries with game and user relationships
+    // Seed Game Entries with generated game and user relationships
     for (const entry of mockGameEntries) {
       try {
-        await tablesDb.createRow(databaseId, 'game_entries', entry.$id, {
-          playerName: entry.playerName,
-          playerSuitIcon: entry.playerSuitIcon,
-          tableNumber: entry.tableNumber,
-          seatNumber: entry.seatNumber,
-          buyinsCount: entry.buyinsCount,
-          rebuysCount: entry.rebuysCount,
-          addonsCount: entry.addonsCount,
-          status: entry.status || (entry.isEliminated ? 'ELIMINATED' : 'ACTIVE'),
-          hasDgCarryover: Boolean(entry.hasDgCarryover),
-          earnedDgForNextGame: Boolean(entry.earnedDgForNextGame),
-          survivedRebuy: Boolean(entry.survivedRebuy),
-          rebuyOnly: Boolean(entry.rebuyOnly),
-          finishPosition: entry.finishPosition || 0,
-          pointsAwarded: entry.pointsAwarded || 0,
-          kosCount: entry.kosCount,
-          knockouts: JSON.stringify(entry.knockouts || []),
-          handBonuses: JSON.stringify(entry.handBonuses || []),
-          eliminatedBySeat: entry.eliminatedBySeat || 0,
-          knockedOutByPlayerId: entry.knockedOutByPlayerId || '',
-          knockedOutByPlayerName: entry.knockedOutByPlayerName || '',
-          calculatedBasePoints: entry.calculatedBasePoints || 0,
-          calculatedFinalPoints: entry.calculatedFinalPoints || 0,
-          isEliminated: entry.isEliminated,
-          game: entry.gameId,
-          player: entry.playerId,
-        }, defaultPermissions);
-        console.log(`  ✅ Seeded Entry: ${entry.playerName} -> Game(${entry.gameId}) & Player(${entry.playerId})`);
+        const gameRef = gameIdMap.get(entry.gameId) || '';
+        const playerRef = playerIdMap.get(entry.playerId) || '';
+        const killerRef = entry.knockedOutByPlayerId
+          ? playerIdMap.get(entry.knockedOutByPlayerId) || ''
+          : '';
+        const created = await tablesDb.createRow(
+          databaseId,
+          'game_entries',
+          ID.unique(),
+          {
+            playerName: entry.playerName,
+            playerSuitIcon: entry.playerSuitIcon,
+            tableNumber: entry.tableNumber,
+            seatNumber: entry.seatNumber,
+            buyinsCount: entry.buyinsCount,
+            rebuysCount: entry.rebuysCount,
+            addonsCount: entry.addonsCount,
+            status: entry.status || (entry.isEliminated ? 'ELIMINATED' : 'ACTIVE'),
+            ...(typeof entry.showUpAwarded === 'boolean' ? { showUpAwarded: entry.showUpAwarded } : {}),
+            hasDgCarryover: Boolean(entry.hasDgCarryover),
+            earnedDgForNextGame: Boolean(entry.earnedDgForNextGame),
+            survivedRebuy: Boolean(entry.survivedRebuy),
+            rebuyOnly: Boolean(entry.rebuyOnly),
+            finishPosition: entry.finishPosition || 0,
+            pointsAwarded: entry.pointsAwarded || 0,
+            kosCount: entry.kosCount,
+            knockouts: JSON.stringify(entry.knockouts || []),
+            handBonuses: JSON.stringify(entry.handBonuses || []),
+            eliminatedBySeat: entry.eliminatedBySeat || 0,
+            knockedOutByPlayerId: killerRef,
+            knockedOutByPlayerName: entry.knockedOutByPlayerName || '',
+            calculatedBasePoints: entry.calculatedBasePoints || 0,
+            calculatedFinalPoints: entry.calculatedFinalPoints || 0,
+            isEliminated: entry.isEliminated,
+            game: gameRef,
+            player: playerRef,
+          },
+          defaultPermissions
+        );
+        console.log(`  ✅ Seeded Entry: ${entry.playerName} ($id: ${created.$id})`);
       } catch (e: any) {
-        if (e.code === 409 || e.type === 'row_already_exists') {
-          console.log(`  - Entry (${entry.playerName}) exists.`);
-        } else {
-          console.error(`  ❌ Failed to seed Entry (${entry.playerName}):`, e.message || e);
-        }
+        console.error(`  ❌ Failed to seed Entry (${entry.playerName}):`, e.message || e);
       }
     }
 
-
-    // Seed Hot Hands with league relationship
+    // Seed Hot Hand target with league relationship
     try {
-      await tablesDb.createRow(databaseId, 'hot_hands', mockHotHandJackpot.$id, {
-        date: mockHotHandJackpot.date,
-        handTitle: mockHotHandJackpot.handTitle,
-        currentPool: mockHotHandJackpot.currentPool,
-        isClaimed: mockHotHandJackpot.isClaimed,
-        league: mockLeague.$id,
-      }, defaultPermissions);
-      console.log('  ✅ Seeded Hot Hand Jackpot -> League(' + mockLeague.$id + ')');
+      const created = await tablesDb.createRow(
+        databaseId,
+        'hot_hands',
+        ID.unique(),
+        {
+          date: mockHotHandJackpot.date,
+          handTitle: mockHotHandJackpot.handTitle,
+          currentPool: mockHotHandJackpot.currentPool,
+          isClaimed: mockHotHandJackpot.isClaimed,
+          league: primaryLeagueId,
+        },
+        defaultPermissions
+      );
+      console.log(`  ✅ Seeded Hot Hand Target ($id: ${created.$id})`);
     } catch (e: any) {
-      if (e.code === 409 || e.type === 'row_already_exists') {
-        console.log(`  - Hot Hand Jackpot exists.`);
-      } else {
-        console.error(`  ❌ Failed to seed Hot Hand Jackpot:`, e.message || e);
-      }
+      console.error(`  ❌ Failed to seed Hot Hand Target:`, e.message || e);
     }
 
     // Seed Announcements
     for (const ann of mockAnnouncements) {
       try {
-        await tablesDb.createRow(databaseId, 'announcements', ann.$id, {
-          title: ann.title,
-          content: ann.content,
-          type: ann.type,
-          createdAt: ann.createdAt,
-        }, defaultPermissions);
-        console.log(`  ✅ Seeded Announcement: ${ann.title}`);
+        const created = await tablesDb.createRow(
+          databaseId,
+          'announcements',
+          ID.unique(),
+          {
+            title: ann.title,
+            content: ann.content,
+            type: ann.type,
+            isActive: ann.isActive ?? true,
+            createdAt: ann.createdAt,
+          },
+          defaultPermissions
+        );
+        console.log(`  ✅ Seeded Announcement: ${ann.title} ($id: ${created.$id})`);
       } catch (e: any) {
-        if (e.code === 409 || e.type === 'row_already_exists') {
-          console.log(`  - Announcement (${ann.title}) exists.`);
-        } else {
-          console.error(`  ❌ Failed to seed Announcement (${ann.title}):`, e.message || e);
-        }
+        console.error(`  ❌ Failed to seed Announcement (${ann.title}):`, e.message || e);
       }
     }
 

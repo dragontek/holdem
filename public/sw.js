@@ -1,17 +1,18 @@
-/* Jack Ten Poker — Production PWA Service Worker */
-const CACHE_VERSION = 'jackten-pwa-v1';
+/* Jack Ten Poker — Production PWA Service Worker (Base-Path Aware for Root & GitHub Pages) */
+const CACHE_VERSION = 'jackten-pwa-v2';
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
+const BASE_PATH = new URL('./', self.location.href).pathname;
 
 const PRECACHE_URLS = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/favicon.svg',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/icon-maskable-512.png',
-  '/icons/apple-touch-icon.png',
+  BASE_PATH,
+  `${BASE_PATH}index.html`,
+  `${BASE_PATH}manifest.webmanifest`,
+  `${BASE_PATH}favicon.svg`,
+  `${BASE_PATH}icons/icon-192.png`,
+  `${BASE_PATH}icons/icon-512.png`,
+  `${BASE_PATH}icons/icon-maskable-512.png`,
+  `${BASE_PATH}icons/apple-touch-icon.png`,
 ];
 
 self.addEventListener('install', (event) => {
@@ -76,14 +77,15 @@ self.addEventListener('fetch', (event) => {
           if (response && response.ok && response.type === 'basic') {
             const copy = response.clone();
             caches.open(APP_SHELL_CACHE).then((cache) => {
-              cache.put('/index.html', copy).catch(() => {});
+              cache.put(`${BASE_PATH}index.html`, copy).catch(() => {});
             });
           }
           return response;
         })
         .catch(async () => {
           const cachedShell =
-            (await caches.match('/index.html')) || (await caches.match('/'));
+            (await caches.match(`${BASE_PATH}index.html`)) ||
+            (await caches.match(BASE_PATH));
           return (
             cachedShell ||
             new Response('Offline — please reconnect to load Jack Ten Poker.', {
@@ -96,12 +98,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static built assets (/assets/*, icons, manifest): Stale-while-revalidate
+  // Static built assets (<base>/assets/*, icons, manifest): Stale-while-revalidate
   const isStaticAsset =
-    url.pathname.startsWith('/assets/') ||
-    url.pathname.startsWith('/icons/') ||
-    url.pathname === '/favicon.svg' ||
-    url.pathname === '/manifest.webmanifest';
+    url.pathname.startsWith(`${BASE_PATH}assets/`) ||
+    url.pathname.startsWith(`${BASE_PATH}icons/`) ||
+    url.pathname === `${BASE_PATH}favicon.svg` ||
+    url.pathname === `${BASE_PATH}manifest.webmanifest`;
 
   if (isStaticAsset) {
     event.respondWith(

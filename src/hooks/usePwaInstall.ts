@@ -74,8 +74,11 @@ export function usePwaInstall() {
     };
     navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
 
+    const baseUrl = import.meta.env.BASE_URL || '/';
+    const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+
     void navigator.serviceWorker
-      .register('/sw.js', { scope: '/' })
+      .register(`${normalizedBase}sw.js`, { scope: normalizedBase })
       .then((registration) => {
         if (registration.waiting) {
           waitingWorkerRef.current = registration.waiting;

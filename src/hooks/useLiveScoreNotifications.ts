@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Game, GameEntry } from '@/types/holdem';
+import { isAppwriteConfigured } from '@/lib/appwrite';
 import { AppwriteService } from '@/services/appwriteService';
 import { AppwriteRealtime, extractPayloadGameId } from '@/services/appwriteRealtime';
 import {
@@ -7,10 +8,17 @@ import {
   playScoreChime,
   type LiveScoreNotification,
 } from '@/lib/liveScoreEvents';
+import {
+  applyLevelDurationOverrides,
+  shouldAcceptIncomingClockAnchor,
+  type GameClockSnapshot,
+} from '@/lib/gameClock';
 
 const DEDUPE_WINDOW_MS = 8000;
+const CANONICAL_SUPPRESS_WINDOW_MS = 3500;
+const FALLBACK_DIFF_DELAY_MS = 450;
 const HIGHLIGHT_DURATION_MS = 9000;
-const TV_BANNER_DURATION_MS = 8000;
+const TV_BANNER_DURATION_MS = 60_000;
 const MAX_FEED_ITEMS = 15;
 const SOUND_PREF_KEY = 'holdem_live_score_sound';
 
@@ -23,14 +31,19 @@ function isAnyModalDialogOpen(): boolean {
 
 interface UseLiveScoreNotificationsOptions {
   games: Game[];
-  selectedGameId?: string;
+  /**
+   * The game ID the user is actively viewing right now (in Live Game / Director Desk or TV mode).
+   * Notifications (toasts, chimes, TV banners, highlights) are shown ONLY when points are awarded
+   * in this viewed game. Pass null/undefined when the user is on non-game views.
+   */
+  viewedGameId?: string | null;
   onRemoteEntryUpserted?: (gameId: string, entry: GameEntry, gameEntries: GameEntry[]) => void;
   onRemoteGameUpdated?: (gameId: string, patch: Partial<Game>) => void;
 }
 
 export function useLiveScoreNotifications({
   games,
-  selectedGameId,
+  viewedGameId,
   onRemoteEntryUpserted,
   onRemoteGameUpdated,
 }: UseLiveScoreNotificationsOptions) {
@@ -49,25 +62,54 @@ export function useLiveScoreNotifications({
   });
 
   const gamesRef = useRef<Game[]>(games);
-  const selectedGameIdRef = useRef<string | undefined>(selectedGameId);
+  const viewedGameIdRef = useRef<string | null | undefined>(viewedGameId);
   const soundEnabledRef = useRef<boolean>(soundEnabled);
   const onRemoteEntryRef = useRef(onRemoteEntryUpserted);
   const onRemoteGameRef = useRef(onRemoteGameUpdated);
 
   const entriesByGameRef = useRef<Map<string, Map<string, GameEntry>>>(new Map());
+  const entryIdToGameIdRef = useRef<Map<string, string>>(new Map());
   const seenFingerprintsRef = useRef<Map<string, number>>(new Map());
+  const recentCanonicalAtRef = useRef<Map<string, number>>(new Map());
   const recentKillerKoAtRef = useRef<Map<string, number>>(new Map());
+  const lastServerClockAnchorRef = useRef<Map<string, string>>(new Map());
+  const pendingFallbackTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const deferredToastsRef = useRef<LiveScoreNotification[]>([]);
   const highlightTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const tvBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     gamesRef.current = games;
-    selectedGameIdRef.current = selectedGameId;
+    viewedGameIdRef.current = viewedGameId;
     soundEnabledRef.current = soundEnabled;
     onRemoteEntryRef.current = onRemoteEntryUpserted;
     onRemoteGameRef.current = onRemoteGameUpdated;
   });
+
+  // Clear active pop-ups / TV alerts when navigating away from a game or switching games
+  useEffect(() => {
+    deferredToastsRef.current = deferredToastsRef.current.filter(
+      (t) => Boolean(viewedGameId) && t.gameId === viewedGameId
+    );
+    const frame = requestAnimationFrame(() => {
+      setToasts((prev) =>
+        viewedGameId ? prev.filter((t) => t.gameId === viewedGameId) : []
+      );
+      setTvBannerAlert((curr) =>
+        curr && viewedGameId && curr.gameId === viewedGameId ? curr : null
+      );
+      setHighlightedPlayers((prev) => {
+        if (prev.size === 0) return prev;
+        if (!viewedGameId) return new Map();
+        const next = new Map<string, LiveScoreNotification>();
+        for (const [pid, notif] of prev.entries()) {
+          if (notif.gameId === viewedGameId) next.set(pid, notif);
+        }
+        return next;
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [viewedGameId]);
 
   // Prime baseline entry snapshots across all games so remote diffs work on every view
   useEffect(() => {
@@ -77,6 +119,7 @@ export function useLiveScoreNotifications({
         if (!active) return;
         for (const entry of entries) {
           if (!entry.gameId) continue;
+          entryIdToGameIdRef.current.set(entry.$id, entry.gameId);
           let bucket = entriesByGameRef.current.get(entry.gameId);
           if (!bucket) {
             bucket = new Map();
@@ -117,7 +160,10 @@ export function useLiveScoreNotifications({
   }, []);
 
   const ingestNotification = useCallback(
-    (notification: LiveScoreNotification, options?: { broadcast?: boolean }) => {
+    (
+      notification: LiveScoreNotification,
+      options?: { broadcast?: boolean; publishToAppwrite?: boolean; isCanonical?: boolean }
+    ) => {
       const now = Date.now();
 
       // Prune expired fingerprints
@@ -144,7 +190,57 @@ export function useLiveScoreNotifications({
       }
       seenFingerprintsRef.current.set(notification.fingerprint, now);
 
+      // Track canonical notifications so entry-diff fallbacks never emit a mismatched duplicate
+      if (options?.isCanonical || options?.broadcast || options?.publishToAppwrite) {
+        recentCanonicalAtRef.current.set(`${notification.gameId}:__any__`, now);
+        if (notification.primaryPlayerId) {
+          recentCanonicalAtRef.current.set(
+            `${notification.gameId}:${notification.primaryPlayerId}`,
+            now
+          );
+        }
+        if (notification.primaryPlayerName) {
+          recentCanonicalAtRef.current.set(
+            `${notification.gameId}:name:${notification.primaryPlayerName.trim().toLowerCase()}`,
+            now
+          );
+        }
+        if (notification.secondaryPlayerId) {
+          recentCanonicalAtRef.current.set(
+            `${notification.gameId}:${notification.secondaryPlayerId}`,
+            now
+          );
+        }
+        if (notification.secondaryPlayerName) {
+          recentCanonicalAtRef.current.set(
+            `${notification.gameId}:name:${notification.secondaryPlayerName.trim().toLowerCase()}`,
+            now
+          );
+        }
+        if (notification.fingerprint.startsWith('showup_cutoff:')) {
+          recentCanonicalAtRef.current.set(`${notification.gameId}:__all__`, now);
+        }
+      }
+
       setRecentFeed((prev) => [notification, ...prev].slice(0, MAX_FEED_ITEMS));
+
+      // Relay exact canonical notification to peer browser tabs AND remote Appwrite devices
+      if (options?.broadcast) {
+        AppwriteRealtime.broadcastScoreNotification(notification);
+      }
+      if (options?.publishToAppwrite) {
+        void AppwriteService.publishLiveScoreNotification(notification);
+      }
+
+      // Only surface live alerts (toasts, TV banner, sound chime, row highlights) to users
+      // currently viewing the specific game where these points were awarded.
+      const isViewingAwardedGame = Boolean(
+        viewedGameIdRef.current && notification.gameId === viewedGameIdRef.current
+      );
+      if (!isViewingAwardedGame) {
+        return;
+      }
+
       triggerHighlight(notification.primaryPlayerId, notification);
 
       // Update TV Broadcast Banner immediately
@@ -164,10 +260,6 @@ export function useLiveScoreNotifications({
       } else {
         setToasts((prev) => [...prev.slice(-3), notification]);
       }
-
-      if (options?.broadcast) {
-        AppwriteRealtime.broadcastScoreNotification(notification);
-      }
     },
     [triggerHighlight]
   );
@@ -177,9 +269,14 @@ export function useLiveScoreNotifications({
     if (typeof MutationObserver === 'undefined') return;
     const observer = new MutationObserver(() => {
       if (deferredToastsRef.current.length > 0 && !isAnyModalDialogOpen()) {
-        const pending = deferredToastsRef.current;
+        const activeViewedId = viewedGameIdRef.current;
+        const pending = deferredToastsRef.current.filter(
+          (t) => Boolean(activeViewedId) && t.gameId === activeViewedId
+        );
         deferredToastsRef.current = [];
-        setToasts((prev) => [...prev, ...pending].slice(-4));
+        if (pending.length > 0) {
+          setToasts((prev) => [...prev, ...pending].slice(-4));
+        }
       }
     });
     observer.observe(document.body, {
@@ -200,6 +297,7 @@ export function useLiveScoreNotifications({
       const bucket = new Map<string, GameEntry>();
       for (const e of entries) {
         bucket.set(e.$id, e);
+        entryIdToGameIdRef.current.set(e.$id, gameId);
       }
       entriesByGameRef.current.set(gameId, bucket);
       if (broadcastChangedEntry) {
@@ -214,7 +312,11 @@ export function useLiveScoreNotifications({
 
   const emitScoreEvent = useCallback(
     (notification: LiveScoreNotification) => {
-      ingestNotification(notification, { broadcast: true });
+      ingestNotification(notification, {
+        broadcast: true,
+        publishToAppwrite: true,
+        isCanonical: true,
+      });
     },
     [ingestNotification]
   );
@@ -237,29 +339,114 @@ export function useLiveScoreNotifications({
   useEffect(() => {
     const handleIncomingEntryPayload = (rawPayload: Record<string, unknown>, explicitGameId?: string) => {
       const mapped = AppwriteService.mapRealtimeGameEntry(rawPayload);
-      const gameId = explicitGameId || mapped.gameId || extractPayloadGameId(rawPayload);
+      const gameId =
+        explicitGameId ||
+        mapped.gameId ||
+        extractPayloadGameId(rawPayload) ||
+        entryIdToGameIdRef.current.get(mapped.$id) ||
+        '';
       if (!gameId || !mapped.$id) return;
 
-      const normalizedEntry: GameEntry = { ...mapped, gameId };
+      entryIdToGameIdRef.current.set(mapped.$id, gameId);
       let bucket = entriesByGameRef.current.get(gameId);
       if (!bucket) {
         bucket = new Map();
         entriesByGameRef.current.set(gameId, bucket);
       }
-      const prevEntry = bucket.get(normalizedEntry.$id);
+      const prevEntry = bucket.get(mapped.$id);
+      // Preserve player identity fields if Appwrite Realtime omitted unexpanded relationship columns
+      const normalizedEntry: GameEntry = {
+        ...mapped,
+        gameId,
+        playerId: mapped.playerId || prevEntry?.playerId || '',
+        playerName: mapped.playerName || prevEntry?.playerName || '',
+        playerSuitIcon: mapped.playerSuitIcon || prevEntry?.playerSuitIcon || 'spades',
+      };
       bucket.set(normalizedEntry.$id, normalizedEntry);
 
       const allForGame = Array.from(bucket.values());
       const game = gamesRef.current.find((g) => g.$id === gameId);
       if (game && prevEntry) {
         const diffed = diffEntryForScoreEvents(prevEntry, normalizedEntry, game, allForGame);
-        for (const ev of diffed) {
-          ingestNotification(ev, { broadcast: false });
+        if (diffed.length > 0) {
+          const emitFallback = () => {
+            const now = Date.now();
+            const gameWideTs = Math.max(
+              recentCanonicalAtRef.current.get(`${gameId}:__all__`) || 0,
+              recentCanonicalAtRef.current.get(`${gameId}:__any__`) || 0
+            );
+            if (gameWideTs && now - gameWideTs < CANONICAL_SUPPRESS_WINDOW_MS) {
+              return;
+            }
+            for (const ev of diffed) {
+              const primaryKey = ev.primaryPlayerId ? `${gameId}:${ev.primaryPlayerId}` : '';
+              const primaryNameKey = ev.primaryPlayerName
+                ? `${gameId}:name:${ev.primaryPlayerName.trim().toLowerCase()}`
+                : '';
+              const secondaryKey = ev.secondaryPlayerId ? `${gameId}:${ev.secondaryPlayerId}` : '';
+              const secondaryNameKey = ev.secondaryPlayerName
+                ? `${gameId}:name:${ev.secondaryPlayerName.trim().toLowerCase()}`
+                : '';
+              const lastCanonical = Math.max(
+                primaryKey ? recentCanonicalAtRef.current.get(primaryKey) || 0 : 0,
+                primaryNameKey ? recentCanonicalAtRef.current.get(primaryNameKey) || 0 : 0,
+                secondaryKey ? recentCanonicalAtRef.current.get(secondaryKey) || 0 : 0,
+                secondaryNameKey ? recentCanonicalAtRef.current.get(secondaryNameKey) || 0 : 0
+              );
+              if (lastCanonical && now - lastCanonical < CANONICAL_SUPPRESS_WINDOW_MS) {
+                continue;
+              }
+              ingestNotification(ev, { broadcast: false });
+            }
+          };
+
+          // Give the canonical live_score_event broadcast a brief head start so remote users
+          // always receive the exact same hand/headline/points as the Scribe.
+          if (isAppwriteConfigured) {
+            const timer = setTimeout(() => {
+              pendingFallbackTimersRef.current.delete(timer);
+              emitFallback();
+            }, FALLBACK_DIFF_DELAY_MS);
+            pendingFallbackTimersRef.current.add(timer);
+          } else {
+            emitFallback();
+          }
         }
       }
 
       onRemoteEntryRef.current?.(gameId, normalizedEntry, allForGame);
     };
+
+    const applyClockSnapshot = (clock: GameClockSnapshot) => {
+      const prevServerAnchor = lastServerClockAnchorRef.current.get(clock.gameId);
+      if (!shouldAcceptIncomingClockAnchor(prevServerAnchor, clock.clockAnchorAt)) {
+        return;
+      }
+      lastServerClockAnchorRef.current.set(clock.gameId, clock.clockAnchorAt);
+      const existingGame = gamesRef.current.find((g) => g.$id === clock.gameId);
+      const patch: Partial<Game> = {
+        status: clock.status,
+        currentLevelIndex: clock.currentLevelIndex,
+        secondsRemainingInLevel: clock.secondsRemainingInLevel,
+        clockAnchorAt: clock.clockAnchorAt,
+        levelDurationOverrides: clock.levelDurationOverrides,
+      };
+      if (existingGame) {
+        patch.blindSchedule = applyLevelDurationOverrides(
+          existingGame.blindSchedule,
+          clock.levelDurationOverrides
+        );
+      }
+      onRemoteGameRef.current?.(clock.gameId, patch);
+    };
+
+    const unsubClockState = AppwriteRealtime.subscribeToClockState((clock) => {
+      applyClockSnapshot(clock);
+    });
+
+    const unsubScoreEvents = AppwriteRealtime.subscribeToScoreEvents((notification) => {
+      ingestNotification(notification, { broadcast: false, isCanonical: true });
+    });
 
     const unsubEntries = AppwriteRealtime.subscribeToAllGameEntries(({ event, payload }) => {
       if (event.endsWith('.delete')) return;
@@ -268,11 +455,44 @@ export function useLiveScoreNotifications({
 
     const unsubGames = AppwriteRealtime.subscribeToAllGames(({ event, payload }) => {
       if (event.endsWith('.delete') || typeof payload.$id !== 'string') return;
+      const existingGame = gamesRef.current.find((g) => g.$id === payload.$id);
+      const hasAuthoritativeClock = Boolean(
+        lastServerClockAnchorRef.current.has(payload.$id) || existingGame?.clockAnchorAt
+      );
+      const payloadAnchor =
+        typeof payload.clockAnchorAt === 'string' && payload.clockAnchorAt
+          ? payload.clockAnchorAt
+          : undefined;
+      const acceptClockFields = Boolean(
+        payloadAnchor
+          ? shouldAcceptIncomingClockAnchor(
+              lastServerClockAnchorRef.current.get(payload.$id),
+              payloadAnchor
+            )
+          : !hasAuthoritativeClock
+      );
+
       const patch: Partial<Game> = {};
-      if (typeof payload.status === 'string') patch.status = payload.status as Game['status'];
-      if (typeof payload.currentLevelIndex === 'number') patch.currentLevelIndex = payload.currentLevelIndex;
-      if (typeof payload.secondsRemainingInLevel === 'number') {
-        patch.secondsRemainingInLevel = payload.secondsRemainingInLevel;
+      if (typeof payload.status === 'string') {
+        const nextStatus = payload.status as Game['status'];
+        // Always accept terminal status transitions; let clock stream drive running/paused when anchored
+        if (acceptClockFields || nextStatus === 'completed' || nextStatus === 'canceled') {
+          patch.status = nextStatus;
+        }
+      }
+      if (acceptClockFields) {
+        if (typeof payload.currentLevelIndex === 'number') {
+          patch.currentLevelIndex = payload.currentLevelIndex;
+        }
+        if (typeof payload.secondsRemainingInLevel === 'number') {
+          patch.secondsRemainingInLevel = payload.secondsRemainingInLevel;
+        }
+        if (payloadAnchor) {
+          patch.clockAnchorAt = payloadAnchor;
+          lastServerClockAnchorRef.current.set(payload.$id, payloadAnchor);
+        } else if (patch.status === 'running' && typeof payload.$updatedAt === 'string') {
+          patch.clockAnchorAt = payload.$updatedAt;
+        }
       }
       if (typeof payload.pointMultiplier === 'number') {
         patch.pointMultiplier = payload.pointMultiplier as Game['pointMultiplier'];
@@ -284,18 +504,29 @@ export function useLiveScoreNotifications({
         patch.hotHandDescription = payload.hotHandDescription;
       }
       if (typeof payload.purpleCount === 'number') patch.purpleCount = payload.purpleCount;
-      onRemoteGameRef.current?.(payload.$id, patch);
+      if (Object.keys(patch).length > 0) {
+        onRemoteGameRef.current?.(payload.$id, patch);
+      }
     });
 
     const unsubLocal = AppwriteRealtime.subscribeToLocalBroadcasts({
-      onNotification: (notification) => ingestNotification(notification, { broadcast: false }),
+      onNotification: (notification) =>
+        ingestNotification(notification, { broadcast: false, isCanonical: true }),
       onEntryUpdated: (gameId, payload) => handleIncomingEntryPayload(payload, gameId),
+      onClockUpdated: (clock) => applyClockSnapshot(clock),
     });
 
+    const fallbackTimers = pendingFallbackTimersRef.current;
     return () => {
+      unsubClockState();
+      unsubScoreEvents();
       unsubEntries();
       unsubGames();
       unsubLocal();
+      for (const t of fallbackTimers) {
+        clearTimeout(t);
+      }
+      fallbackTimers.clear();
     };
   }, [ingestNotification]);
 

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import type { Game, GameEntry, HotHandJackpot, Announcement } from '../types/holdem';
 import type { LiveScoreNotification } from '@/lib/liveScoreEvents';
 import { BAR_BONUS_CHIP_VALUE } from '@/lib/scoring';
-import { AppwriteRealtime } from '../services/appwriteRealtime';
+import { useGameClock } from '@/hooks/useGameClock';
+import { formatClockTime } from '@/lib/gameClock';
 import { TVBroadcastBanner, TVLiveStandingsPanel } from './tv/TVBroadcastBanner';
 import {
   Sparkles,
@@ -30,11 +31,14 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
   highlightedPlayers = new Map(),
   recentFeed = [],
 }) => {
-  const [secondsLeft, setSecondsLeft] = useState<number>(game.secondsRemainingInLevel);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  const currentLevel = game.blindSchedule[game.currentLevelIndex] || game.blindSchedule[0];
-  const nextLevel = game.blindSchedule[game.currentLevelIndex + 1];
+  // Backend-authoritative live clock (identical to Director Desk & all viewers)
+  const {
+    secondsRemaining: secondsLeft,
+    currentLevel,
+    nextLevel,
+  } = useGameClock(game);
 
   const totalChipsInPlay =
     game.totalEntriesCount * game.startingChips +
@@ -42,32 +46,6 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
   const avgStack = game.remainingPlayersCount > 0 
     ? Math.round(totalChipsInPlay / game.remainingPlayersCount)
     : 0;
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Appwrite WebSockets Realtime Listener for TV Screen
-  useEffect(() => {
-    if (!game.$id) return;
-
-    const unsubscribe = AppwriteRealtime.subscribeToGameUpdates(game.$id, (data) => {
-      if (data.payload && typeof data.payload.secondsRemainingInLevel === 'number') {
-        setSecondsLeft(data.payload.secondsRemainingInLevel);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [game.$id]);
-
-  const formatTime = (totalSeconds: number) => {
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -174,8 +152,18 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
 
           {/* Huge Timer */}
           <div className="text-7xl xl:text-[120px] font-mono font-black tracking-tight text-white drop-shadow-2xl leading-none">
-            {formatTime(secondsLeft)}
+            {formatClockTime(secondsLeft)}
           </div>
+
+          {game.status !== 'running' && (
+            <span className="px-3 py-1 rounded-full bg-slate-900/90 border border-slate-700 text-xs font-extrabold uppercase tracking-widest text-amber-300">
+              {game.status === 'paused'
+                ? 'CLOCK PAUSED'
+                : game.status === 'completed'
+                ? 'TOURNAMENT COMPLETED'
+                : 'WAITING TO START'}
+            </span>
+          )}
 
           {/* Current Blinds Banner */}
           <div className="flex items-center gap-8 bg-slate-950/80 px-6 py-4 rounded-2xl border border-slate-800 shadow-2xl">

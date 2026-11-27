@@ -20,7 +20,8 @@ export function normalizeAppwriteEndpoint(raw: string): string {
 
 const rawEndpoint = import.meta.env.VITE_APPWRITE_ENDPOINT || '';
 export const APPWRITE_ENDPOINT = normalizeAppwriteEndpoint(rawEndpoint);
-const projectId = (import.meta.env.VITE_APPWRITE_PROJECT_ID || '').trim();
+export const APPWRITE_PROJECT_ID = (import.meta.env.VITE_APPWRITE_PROJECT_ID || '').trim();
+const projectId = APPWRITE_PROJECT_ID;
 export const DATABASE_ID = (import.meta.env.VITE_APPWRITE_DATABASE_ID || 'holdem_db').trim();
 export const VENUE_IMAGES_BUCKET_ID =
   (import.meta.env.VITE_APPWRITE_VENUE_BUCKET_ID || 'venue_images').trim();

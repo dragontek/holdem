@@ -125,6 +125,15 @@ export interface Game {
   status: GameStatus;
   currentLevelIndex: number;
   secondsRemainingInLevel: number;
+  /**
+   * Backend server-stamped UTC ISO-8601 timestamp when `(currentLevelIndex, secondsRemainingInLevel)`
+   * was anchored. All clients derive the live countdown deterministically from this anchor.
+   */
+  clockAnchorAt?: string;
+  /**
+   * Optional per-level duration overrides in minutes persisted with the backend clock state.
+   */
+  levelDurationOverrides?: Record<number, number>;
   dealerName?: string;
   dealers?: string[];
   scribes?: string[];

@@ -1,7 +1,19 @@
 import React, { useState } from 'react';
-import type { Venue, BlindLevel } from '../types/holdem';
+import type { Venue } from '../types/holdem';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
+import {
+  formatBlindInThousands,
+  HAND_BONUS_CODE_LIST,
+  HAND_BONUS_DEFINITIONS,
+  KO_CODE_LIST,
+  KO_DEFINITIONS,
+  NO_GAME_SHOW_UP_POINTS,
+  OFFICIAL_BLIND_SCHEDULE,
+  PLACEMENT_POINTS,
+  SHOW_UP_POINTS,
+  SURVIVOR_POINTS,
+} from '@/lib/scoring';
 import { 
   BookOpen, 
   Award, 
@@ -12,7 +24,9 @@ import {
   ShieldCheck, 
   Flame, 
   HelpCircle,
-  FileText
+  Star,
+  Sun,
+  Ban
 } from 'lucide-react';
 
 interface InfoViewProps {
@@ -25,18 +39,7 @@ type InfoTab = 'rules' | 'scoring' | 'blinds' | 'contacts';
 export const InfoView: React.FC<InfoViewProps> = ({ venues, seasonName }) => {
   const [activeTab, setActiveTab] = useState<InfoTab>('rules');
 
-  const standardBlinds: BlindLevel[] = [
-    { level: 1, smallBlind: 100, bigBlind: 100, ante: 0, durationMinutes: 15, isBreak: false },
-    { level: 2, smallBlind: 100, bigBlind: 200, ante: 200, durationMinutes: 15, isBreak: false },
-    { level: 3, smallBlind: 200, bigBlind: 400, ante: 400, durationMinutes: 15, isBreak: false },
-    { level: 4, smallBlind: 300, bigBlind: 600, ante: 600, durationMinutes: 15, isBreak: false },
-    { level: 5, smallBlind: 400, bigBlind: 800, ante: 800, durationMinutes: 15, isBreak: false },
-    { level: 6, smallBlind: 500, bigBlind: 1000, ante: 1000, durationMinutes: 15, isBreak: true, breakTitle: '10-Min Chip Race & Color Up' },
-    { level: 7, smallBlind: 1000, bigBlind: 1500, ante: 1500, durationMinutes: 15, isBreak: false },
-    { level: 8, smallBlind: 1000, bigBlind: 2000, ante: 2000, durationMinutes: 15, isBreak: false },
-    { level: 9, smallBlind: 1500, bigBlind: 3000, ante: 3000, durationMinutes: 15, isBreak: false },
-    { level: 10, smallBlind: 2000, bigBlind: 4000, ante: 4000, durationMinutes: 15, isBreak: false },
-  ];
+  const standardBlinds = OFFICIAL_BLIND_SCHEDULE;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12 animate-fadeIn">
@@ -149,69 +152,189 @@ export const InfoView: React.FC<InfoViewProps> = ({ venues, seasonName }) => {
         </div>
       )}
 
-      {/* Tab 2: Scoring & Points */}
+      {/* Tab 2: Jack Ten Poker Official Scoring & Points */}
       {activeTab === 'scoring' && (
         <div className="space-y-4">
+          {/* A. Attendance & Survival */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base text-amber-400 flex items-center gap-2">
-                  <Award className="w-4 h-4" /> Attendance Points
+                  <Award className="w-4 h-4" /> Show Up Points
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                <div className="text-2xl font-black text-white">+500 pts</div>
-                <p className="text-xs text-slate-400">Awarded to every registered player who checks in and takes a seat before Level 1 completes.</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base text-rose-400 flex items-center gap-2">
-                  <Flame className="w-4 h-4" /> Knockout Bounties
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="text-2xl font-black text-white">+200 pts / KO</div>
-                <p className="text-xs text-slate-400">Earned immediately when you eliminate an opponent from the tournament flight.</p>
+                <div className="text-2xl font-black text-white">+{SHOW_UP_POINTS.toLocaleString()} base</div>
+                <p className="text-xs text-slate-400">
+                  Awarded automatically to all active, non-mucked tournament participants.
+                </p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base text-emerald-400 flex items-center gap-2">
-                  <Flame className="w-4 h-4" /> Hot Hand Jackpot
+                  <Star className="w-4 h-4" /> Survivor Points (☆)
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                <div className="text-2xl font-black text-white">Full Pool Cash</div>
-                <p className="text-xs text-slate-400">Awarded to the player who tables the designated Hot Hand (e.g. Quad 6s) during showdown.</p>
+                <div className="text-2xl font-black text-white">+{SURVIVOR_POINTS.toLocaleString()} base each</div>
+                <p className="text-xs text-slate-400">
+                  Marked with <span className="font-mono text-amber-300">☆</span> in the HD bonus row each time a player goes all-in and survives without busting.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base text-indigo-400 flex items-center gap-2">
+                  <Ban className="w-4 h-4" /> No-Game Show Up
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="text-2xl font-black text-white">+{NO_GAME_SHOW_UP_POINTS.toLocaleString()} flat</div>
+                <p className="text-xs text-slate-400">
+                  Awarded when a scheduled session does not run due to low turnout (DG carryover preserved).
+                </p>
               </CardContent>
             </Card>
           </div>
 
+          {/* B. Final Table Placements (Top 5) */}
           <Card>
             <CardHeader>
-              <CardTitle>Final Table Finishing Position Scale</CardTitle>
-              <CardDescription>Points awarded based on final table position at tournament conclusion</CardDescription>
+              <CardTitle>Final Table Placements (Top 5 Base Points)</CardTitle>
+              <CardDescription>Added to Base Points before session and Day Game multipliers apply</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 text-center">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
                 {[
-                  { pos: '1st', pts: '2,500', color: 'text-amber-400 border-amber-500/40 bg-amber-500/10' },
-                  { pos: '2nd', pts: '1,800', color: 'text-slate-200 border-slate-600 bg-slate-800' },
-                  { pos: '3rd', pts: '1,400', color: 'text-amber-600 border-amber-700 bg-amber-950/40' },
-                  { pos: '4th', pts: '1,100', color: 'text-slate-300 border-slate-800 bg-slate-900/60' },
-                  { pos: '5th', pts: '850', color: 'text-slate-300 border-slate-800 bg-slate-900/60' },
-                  { pos: '6th', pts: '650', color: 'text-slate-300 border-slate-800 bg-slate-900/60' },
-                  { pos: '7th', pts: '500', color: 'text-slate-300 border-slate-800 bg-slate-900/60' },
-                  { pos: '8th-9th', pts: '350', color: 'text-slate-300 border-slate-800 bg-slate-900/60' },
-                ].map((item, idx) => (
-                  <div key={idx} className={`p-3 rounded-xl border ${item.color}`}>
+                  { pos: '1st Place', pts: PLACEMENT_POINTS[1], color: 'text-amber-400 border-amber-500/40 bg-amber-500/10' },
+                  { pos: '2nd Place', pts: PLACEMENT_POINTS[2], color: 'text-slate-200 border-slate-600 bg-slate-800/70' },
+                  { pos: '3rd Place', pts: PLACEMENT_POINTS[3], color: 'text-amber-500 border-amber-700/60 bg-amber-950/30' },
+                  { pos: '4th Place', pts: PLACEMENT_POINTS[4], color: 'text-slate-300 border-slate-800 bg-slate-900/60' },
+                  { pos: '5th Place', pts: PLACEMENT_POINTS[5], color: 'text-slate-300 border-slate-800 bg-slate-900/60' },
+                ].map((item) => (
+                  <div key={item.pos} className={`p-3.5 rounded-xl border ${item.color}`}>
                     <div className="text-xs font-bold">{item.pos}</div>
-                    <div className="text-sm font-black mt-1">{item.pts}</div>
+                    <div className="text-lg font-mono font-black mt-1">
+                      +{item.pts.toLocaleString()}
+                    </div>
                   </div>
                 ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* C & D. Knockouts & Hand Bonuses */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Flame className="w-4 h-4 text-rose-400" /> Knockouts (KO Row)
+                </CardTitle>
+                <CardDescription>Cross-checked against &quot;Knocked out by #&quot; seat audit records</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {KO_CODE_LIST.map((code) => {
+                  const def = KO_DEFINITIONS[code];
+                  return (
+                    <div
+                      key={code}
+                      className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-slate-800"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Badge variant={code === 'R' ? 'purple' : 'destructive'} className="font-mono">
+                          {def.symbol}
+                        </Badge>
+                        <div>
+                          <div className="text-xs font-bold text-white">{def.label}</div>
+                          <div className="text-[11px] text-slate-400">{def.description}</div>
+                        </div>
+                      </div>
+                      <span className="text-sm font-mono font-black text-amber-400">
+                        +{def.points.toLocaleString()}
+                      </span>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Award className="w-4 h-4 text-emerald-400" /> Hand Bonuses (HD Row)
+                </CardTitle>
+                <CardDescription>Recorded per qualifying hand won during the session</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {HAND_BONUS_CODE_LIST.map((code) => {
+                  const def = HAND_BONUS_DEFINITIONS[code];
+                  return (
+                    <div
+                      key={code}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Badge variant="success" className="font-mono min-w-[2rem] justify-center">
+                          {def.symbol}
+                        </Badge>
+                        <div>
+                          <div className="text-xs font-bold text-white">{def.label}</div>
+                          <div className="text-[11px] text-slate-400">{def.description}</div>
+                        </div>
+                      </div>
+                      <span className="text-sm font-mono font-black text-emerald-400">
+                        +{def.points.toLocaleString()}
+                      </span>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Multipliers, DG Carryover & Muck Override */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Sun className="w-4 h-4 text-indigo-400" /> Session Multipliers, Day Game (DG) Stacking &amp; Muck Rule
+              </CardTitle>
+              <CardDescription>
+                Final Score = Base Points × (Session Multiplier × DG 2x Carryover). Playing a Day Game grants a 2x carryover for your next game.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                {[
+                  { session: 'Single Points (1x)', withoutDg: '1x Total', withDg: '2x Total' },
+                  { session: 'Double Points (2x)', withoutDg: '2x Total', withDg: '4x Total' },
+                  { session: 'Triple Points (3x)', withoutDg: '3x Total', withDg: '6x Total' },
+                ].map((row) => (
+                  <div
+                    key={row.session}
+                    className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1"
+                  >
+                    <div className="font-bold text-white">{row.session}</div>
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span>Standard:</span>
+                      <span className="font-mono font-semibold text-slate-200">{row.withoutDg}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-indigo-300">
+                      <span>With DG (2x):</span>
+                      <span className="font-mono font-black text-amber-400">{row.withDg}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-3 rounded-xl bg-rose-950/20 border border-rose-900/50 text-xs text-slate-300">
+                <strong className="text-rose-300">Muck (M) Forfeiture:</strong> Players marked{' '}
+                <span className="font-mono text-rose-300">M</span> / <span className="font-mono text-rose-300">Muck</span>{' '}
+                forfeit all points for that session (<strong className="text-white">0 pts</strong>) and do not earn a new DG
+                carryover, while their elimination record is preserved so the eliminating player retains their{' '}
+                <span className="font-mono text-amber-300">K</span> / <span className="font-mono text-purple-300">R</span> bonus.
               </div>
             </CardContent>
           </Card>
@@ -222,35 +345,88 @@ export const InfoView: React.FC<InfoViewProps> = ({ venues, seasonName }) => {
       {activeTab === 'blinds' && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="w-5 h-5 text-amber-400" /> Standard Deepstack Tournament Blinds
-            </CardTitle>
-            <CardDescription>20,000 Starting Chips • 15-Minute Blind Levels • Big Blind Ante</CardDescription>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-amber-400" /> Official Jack Ten Poker Blind Schedule (In Thousands)
+              </CardTitle>
+              <Badge variant="indigo">Manual Time Overrides Supported</Badge>
+            </div>
+            <CardDescription>
+              Hour 1: 20-min blinds + 10m break • Hour 2: 15-min blinds + 10m break • Hour 3: 10-min blinds
+            </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
+                <div className="font-bold text-amber-400">1st Hour • 20 Min Blinds</div>
+                <div className="text-slate-300 font-mono mt-1">1/2 • 2/4 • 4/8 <span className="text-slate-500">(+10m break)</span></div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
+                <div className="font-bold text-emerald-400">2nd Hour • 15 Min Blinds</div>
+                <div className="text-slate-300 font-mono mt-1">5/10 • 10/20 • 20/40 • 40/80 <span className="text-slate-500">(+10m break)</span></div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
+                <div className="font-bold text-rose-400">3rd Hour • 10 Min Blinds</div>
+                <div className="text-slate-300 font-mono mt-1">50/100 • 100/200 • 200/400 • 400/800</div>
+              </div>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
-                    <th className="py-2.5 px-3">Level</th>
+                    <th className="py-2.5 px-3">Stage</th>
+                    <th className="py-2.5 px-3">In Thousands</th>
                     <th className="py-2.5 px-3">Small Blind</th>
                     <th className="py-2.5 px-3">Big Blind</th>
-                    <th className="py-2.5 px-3">Ante</th>
                     <th className="py-2.5 px-3">Duration</th>
                     <th className="py-2.5 px-3">Notes</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {standardBlinds.map((lvl) => (
-                    <tr key={lvl.level} className={lvl.isBreak ? 'bg-amber-500/10 font-bold text-amber-300' : 'hover:bg-slate-900/50'}>
-                      <td className="py-2.5 px-3 font-bold">{lvl.level}</td>
-                      <td className="py-2.5 px-3">{lvl.smallBlind.toLocaleString()}</td>
-                      <td className="py-2.5 px-3">{lvl.bigBlind.toLocaleString()}</td>
-                      <td className="py-2.5 px-3">{lvl.ante ? lvl.ante.toLocaleString() : '—'}</td>
-                      <td className="py-2.5 px-3">{lvl.durationMinutes} min</td>
-                      <td className="py-2.5 px-3 text-slate-400">{lvl.breakTitle || 'Standard play'}</td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    let playLevel = 0;
+                    return standardBlinds.map((lvl) => {
+                      if (!lvl.isBreak) playLevel += 1;
+                      const hourLabel =
+                        lvl.durationMinutes === 20
+                          ? '1st Hour'
+                          : lvl.durationMinutes === 15
+                          ? '2nd Hour'
+                          : lvl.isBreak
+                          ? 'Break'
+                          : '3rd Hour';
+                      return (
+                        <tr
+                          key={lvl.level}
+                          className={
+                            lvl.isBreak
+                              ? 'bg-amber-500/10 font-bold text-amber-300'
+                              : 'hover:bg-slate-900/50'
+                          }
+                        >
+                          <td className="py-2.5 px-3 font-bold">
+                            {lvl.isBreak ? 'BREAK' : `Level ${playLevel}`}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-amber-300">
+                            {lvl.isBreak
+                              ? '—'
+                              : `${formatBlindInThousands(lvl.smallBlind)} / ${formatBlindInThousands(lvl.bigBlind)}`}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono">
+                            {lvl.isBreak ? '—' : lvl.smallBlind.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono">
+                            {lvl.isBreak ? '—' : lvl.bigBlind.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold">{lvl.durationMinutes} min</td>
+                          <td className="py-2.5 px-3 text-slate-400">
+                            {lvl.breakTitle || `${hourLabel} • Manually overridable`}
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>

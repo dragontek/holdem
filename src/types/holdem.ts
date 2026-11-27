@@ -1,6 +1,10 @@
 export type GameStatus = 'scheduled' | 'running' | 'paused' | 'completed' | 'canceled';
 export type SuitIcon = 'hearts' | 'diamonds' | 'spades' | 'clubs';
 export type UserRole = 'admin' | 'manager' | 'dealer' | 'scribe' | 'player';
+export type PointMultiplier = 1 | 2 | 3;
+export type KnockoutCode = 'K' | 'R';
+export type HandBonusCode = 'SURV' | 'O' | 'S' | '4' | 'F' | '#';
+export type GameEntryStatus = 'ACTIVE' | 'ELIMINATED' | 'MUCK';
 
 /**
  * 1. League
@@ -65,6 +69,7 @@ export interface UserProfile {
   careerKOs: number;
   gamesPlayed: number;
   highHandBadges?: number;
+  hasDgCarryover?: boolean;
   leagueId?: string;
 }
 
@@ -121,6 +126,13 @@ export interface Game {
   currentLevelIndex: number;
   secondsRemainingInLevel: number;
   dealerName?: string;
+  dealers?: string[];
+  scribes?: string[];
+  pointMultiplier?: PointMultiplier;
+  isDayGame?: boolean;
+  noGamePlayed?: boolean;
+  hodRule?: string;
+  purpleCount?: number;
   buyinAmount: number;
   rebuyAmount: number;
   addonAmount: number;
@@ -153,13 +165,23 @@ export interface GameEntry {
   buyinsCount: number;
   rebuysCount: number;
   addonsCount: number;
+  status?: GameEntryStatus;
+  hasDgCarryover?: boolean;
+  earnedDgForNextGame?: boolean;
+  survivedRebuy?: boolean;
+  rebuyOnly?: boolean;
   finishPosition?: number;
   pointsAwarded?: number;
   kosCount: number;
+  knockouts?: KnockoutCode[];
+  handBonuses?: HandBonusCode[];
+  eliminatedBySeat?: number;
   knockedOutByPlayerId?: string;
   knockedOutByPlayerName?: string;
   isEliminated: boolean;
   eliminatedAt?: string;
+  calculatedBasePoints?: number;
+  calculatedFinalPoints?: number;
 }
 
 export interface HotHandJackpot {

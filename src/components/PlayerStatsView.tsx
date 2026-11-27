@@ -1,66 +1,100 @@
 import React from 'react';
-import type { Player } from '../types/holdem';
+import type { Game, GameEntry, Player } from '../types/holdem';
+import { calculateEntryScore } from '@/lib/scoring';
 import { 
-  BarChart3, 
-  Trophy, 
-  Flame, 
-  Target, 
-  Award, 
   ArrowLeft, 
-  ShieldCheck, 
   Calendar,
   Sparkles,
-  Users
+  Sun,
 } from 'lucide-react';
 
 interface PlayerStatsViewProps {
   player: Player;
   allPlayers: Player[];
+  recentEntries?: GameEntry[];
+  games?: Game[];
   onBack?: () => void;
   backLabel?: string;
 }
 
 export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
   player,
-  allPlayers,
+  recentEntries = [],
+  games = [],
   onBack,
   backLabel = 'Back',
 }) => {
   const winRate = ((player.careerWins / (player.gamesPlayed || 1)) * 100).toFixed(1);
   const avgKOs = (player.careerKOs / (player.gamesPlayed || 1)).toFixed(1);
 
-  // Mock historical game breakdown for this player
-  const historyBreakdown = [
+  // Live / current session entries for this player
+  const livePlayerEntries = recentEntries
+    .filter((entry) => entry.playerId === player.$id)
+    .map((entry) => {
+      const game = games.find((g) => g.$id === entry.gameId) || {
+        title: 'Current Session',
+        venueName: 'League Venue',
+        scheduledAt: 'Current Session',
+        pointMultiplier: 1 as const,
+        isDayGame: false,
+        noGamePlayed: false,
+      };
+      const breakdown = calculateEntryScore(entry, game);
+      return {
+        date: `${game.title} (${game.scheduledAt})`,
+        venue: game.venueName,
+        multiplierLabel: breakdown.isMucked
+          ? 'MUCK (0x)'
+          : `${breakdown.totalMultiplier}x (${breakdown.sessionMultiplier}x${
+              breakdown.dgMultiplier === 2 ? ' × 2x DG' : ''
+            })`,
+        awards: breakdown.lineItems.map((item) => ({
+          label: item.code ? `[${item.code}] ${item.label}` : item.label,
+          basePoints: item.basePoints,
+          points: item.finalPoints,
+        })),
+        totalPoints: breakdown.finalPoints,
+      };
+    });
+
+  // Historical sample game breakdown aligned with Jack Ten Poker scoring formula
+  const mockHistoryBreakdown = [
     {
       date: 'Saturday, August 22nd 2026, 2:30 pm',
       venue: 'Single Barrel',
+      multiplierLabel: '3x (Triple)',
       awards: [
-        { label: 'Hand Of The Day', points: 1500 },
-        { label: 'Show Up Points', points: 1800 },
+        { label: '[O] HOD (Off Suit)', basePoints: 500, points: 1500 },
+        { label: 'Show Up Points', basePoints: 600, points: 1800 },
       ],
       totalPoints: 3300,
     },
     {
       date: 'Friday, August 21st 2026, 7:30 pm',
       venue: 'Murray Street Darts',
+      multiplierLabel: '4x (2x Double × 2x DG)',
       awards: [
-        { label: '5th Place Finish', points: 4000 },
-        { label: 'Hand Of Day (Suited)', points: 4000 },
-        { label: 'Show Up Points', points: 2400 },
+        { label: '[#5] 5th Place Finish', basePoints: 1000, points: 4000 },
+        { label: '[S] HOD (Suited)', basePoints: 1000, points: 4000 },
+        { label: 'Show Up Points', basePoints: 600, points: 2400 },
       ],
       totalPoints: 10400,
     },
     {
       date: 'Wednesday, August 19th 2026, 6:00 pm',
       venue: 'Single Barrel',
+      multiplierLabel: '1x (Single)',
       awards: [
-        { label: '1st Place WINNER 🏆', points: 15000 },
-        { label: '4 Knockouts Bonus', points: 4000 },
-        { label: 'Show Up Points', points: 2400 },
+        { label: '[#1] 1st Place Finish', basePoints: 12000, points: 12000 },
+        { label: '[K] Standard Knockout ×4', basePoints: 4000, points: 4000 },
+        { label: '[☆] Survivor Points', basePoints: 500, points: 500 },
+        { label: 'Show Up Points', basePoints: 600, points: 600 },
       ],
-      totalPoints: 21400,
+      totalPoints: 17100,
     },
   ];
+
+  const historyBreakdown = [...livePlayerEntries, ...mockHistoryBreakdown];
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12">
@@ -93,6 +127,11 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
                 {player.isMember && (
                   <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-black">
                     MEMBER
+                  </span>
+                )}
+                {player.hasDgCarryover && (
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 text-xs font-bold flex items-center gap-1">
+                    <Sun className="w-3 h-3" /> DG 2x READY
                   </span>
                 )}
               </div>
@@ -167,16 +206,26 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
         <div className="space-y-3">
           {historyBreakdown.map((item, idx) => (
             <div key={idx} className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 space-y-3">
-              <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs border-b border-slate-800 pb-2">
                 <span className="text-slate-400 font-medium">{item.date}</span>
-                <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-400 font-semibold">{item.venue}</span>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-mono text-[11px] font-bold">
+                    {item.multiplierLabel}
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-400 font-semibold">{item.venue}</span>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 {item.awards.map((award, aIdx) => (
                   <div key={aIdx} className="flex items-center justify-between text-xs">
                     <span className="text-slate-300 font-medium">{award.label}</span>
-                    <span className="font-mono font-semibold text-slate-400">+{award.points.toLocaleString()} pts</span>
+                    <span className="font-mono font-semibold text-slate-400">
+                      <span className="text-[10px] text-slate-500 mr-2">
+                        ({award.basePoints.toLocaleString()} base)
+                      </span>
+                      +{award.points.toLocaleString()} pts
+                    </span>
                   </div>
                 ))}
               </div>

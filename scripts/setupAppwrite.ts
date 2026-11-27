@@ -217,24 +217,22 @@ async function provisionDatabase() {
       }
     }
 
-    console.log('\n2. Creating Tables (v2.0 TablesDB)...');
+    console.log('\n2. Creating / Hardening Tables (v2.0 TablesDB)...');
+    // Public read for spectators & TV displays; authenticated users required for all writes
+    const tablePermissions = [
+      Permission.read(Role.any()),
+      Permission.create(Role.users()),
+      Permission.update(Role.users()),
+      Permission.delete(Role.users()),
+    ];
     for (const t of tables) {
       try {
         await tablesDb.getTable(databaseId, t.id);
-        console.log(`  - Table "${t.id}" exists.`);
+        await tablesDb.updateTable(databaseId, t.id, t.name, tablePermissions);
+        console.log(`  - Table "${t.id}" exists (permissions synced: read=any, write=users).`);
       } catch (getErr: any) {
         try {
-          await tablesDb.createTable(
-            databaseId, 
-            t.id, 
-            t.name, 
-            [
-              Permission.read(Role.any()),
-              Permission.create(Role.any()),
-              Permission.update(Role.any()),
-              Permission.delete(Role.any()),
-            ]
-          );
+          await tablesDb.createTable(databaseId, t.id, t.name, tablePermissions);
           console.log(`  ✅ Created table "${t.id}".`);
         } catch (createErr: any) {
           console.error(`  ❌ Failed to create table "${t.id}":`, createErr.message || createErr);
@@ -316,6 +314,7 @@ async function provisionDatabase() {
     await createIntCol('games', 'totalEntriesCount');
     await createIntCol('games', 'currentLevelIndex');
     await createIntCol('games', 'secondsRemainingInLevel');
+    await createStringCol('games', 'clockAnchorAt', 64);
     await createStringCol('games', 'rsvpPlayerIds', 2000);
 
     // Game Entries Columns
@@ -358,20 +357,30 @@ async function provisionDatabase() {
     await createStringCol('announcements', 'createdAt', 255);
 
     console.log('\n4. Provisioning Storage Buckets...');
+    const bucketPermissions = [
+      Permission.read(Role.any()),
+      Permission.create(Role.users()),
+      Permission.update(Role.users()),
+      Permission.delete(Role.users()),
+    ];
     try {
       await storage.getBucket(venueBucketId);
-      console.log(`  - Storage bucket "${venueBucketId}" exists.`);
+      await storage.updateBucket(
+        venueBucketId,
+        'Venue Images',
+        bucketPermissions,
+        false,
+        true,
+        5 * 1024 * 1024,
+        ['jpg', 'jpeg', 'png', 'webp', 'gif']
+      );
+      console.log(`  - Storage bucket "${venueBucketId}" exists (permissions synced: read=any, write=users).`);
     } catch {
       try {
         await storage.createBucket(
           venueBucketId,
           'Venue Images',
-          [
-            Permission.read(Role.any()),
-            Permission.create(Role.any()),
-            Permission.update(Role.any()),
-            Permission.delete(Role.any()),
-          ],
+          bucketPermissions,
           false,
           true,
           5 * 1024 * 1024,
@@ -436,8 +445,8 @@ async function provisionDatabase() {
     console.log('\n6. Seeding Relational Rows with Appwrite-Generated IDs (ID.unique())...');
     const defaultPermissions = [
       Permission.read(Role.any()),
-      Permission.update(Role.any()),
-      Permission.delete(Role.any()),
+      Permission.update(Role.users()),
+      Permission.delete(Role.users()),
     ];
 
     const leagueIdMap = new Map<string, string>();

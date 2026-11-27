@@ -46,6 +46,28 @@ import {
   hasReachedShowUpCutoff,
   type FinalizedEntryResult,
 } from '../lib/scoring';
+import type { LiveScoreNotification } from '../lib/liveScoreEvents';
+import {
+  GAME_CLOCK_ANNOUNCEMENT_TYPE,
+  applyLevelDurationOverrides,
+  calibrateServerClockFromResponse,
+  getClockRowId,
+  getServerNowMs,
+  parseClockAnnouncementPayload,
+  shouldAcceptIncomingClockAnchor,
+  type GameClockSnapshot,
+} from '../lib/gameClock';
+import { AppwriteRealtime } from './appwriteRealtime';
+import {
+  assertPermission,
+  canAssignRole,
+  getActiveActor,
+  hasPermission,
+  PermissionError,
+} from '../lib/permissions';
+
+export const LIVE_SCORE_EVENT_ANNOUNCEMENT_TYPE = 'live_score_event';
+export { GAME_CLOCK_ANNOUNCEMENT_TYPE };
 
 const SESSION_CACHE_SCOPE = `${APPWRITE_ENDPOINT || 'offline'}__${DATABASE_ID}`;
 const LOCAL_STORAGE_LEAGUES_KEY = 'holdem_leagues';
@@ -491,8 +513,9 @@ export class AppwriteService {
     return mockLeague;
   }
 
-  // Create New League
+  // Create New League (Platform Admin only)
   static async createLeague(leagueData: Omit<League, '$id' | 'createdAt'>): Promise<League> {
+    assertPermission('league:create');
     const newId = ID.unique();
     const createdAt = new Date().toISOString();
     const payload: Record<string, unknown> = {
@@ -527,8 +550,9 @@ export class AppwriteService {
     return newLeague;
   }
 
-  // Update League Information & Manager Assignment
+  // Update League Information & Manager Assignment (Platform Admin only)
   static async updateLeague(leagueId: string, updates: Partial<League>): Promise<boolean> {
+    assertPermission('league:manage');
     if (isAppwriteConfigured) {
       const payload: Record<string, unknown> = {};
       if (updates.name !== undefined) payload.name = updates.name;
@@ -549,11 +573,12 @@ export class AppwriteService {
     return true;
   }
 
-  // Assign or Reassign League Manager
+  // Assign or Reassign League Manager (Platform Admin only)
   static async assignLeagueManager(
     leagueId: string,
     manager: { id: string; name: string; email: string }
   ): Promise<boolean> {
+    assertPermission('league:assign_manager');
     return this.updateLeague(leagueId, {
       managerId: manager.id,
       managerName: manager.name,
@@ -673,8 +698,9 @@ export class AppwriteService {
     return mapped;
   }
 
-  // Create Event
+  // Create Event (Admin & Manager only)
   static async createEvent(eventData: Omit<TournamentEvent, '$id'>): Promise<TournamentEvent> {
+    assertPermission('game:schedule');
     const newId = ID.unique();
     const payload = {
       title: eventData.title,
@@ -706,8 +732,9 @@ export class AppwriteService {
     };
   }
 
-  // Update Event
+  // Update Event (Admin & Manager only)
   static async updateEvent(eventId: string, updates: Partial<TournamentEvent>): Promise<boolean> {
+    assertPermission('game:schedule');
     if (!isAppwriteConfigured) return true;
     try {
       const payload: Record<string, any> = {};
@@ -728,8 +755,9 @@ export class AppwriteService {
     }
   }
 
-  // Delete Event
+  // Delete Event (Admin & Manager only)
   static async deleteEvent(eventId: string): Promise<boolean> {
+    assertPermission('game:delete');
     if (!isAppwriteConfigured) return true;
     try {
       await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.EVENTS, eventId);
@@ -860,10 +888,30 @@ export class AppwriteService {
     gamesPlayed?: number;
     leagueId?: string;
   }): Promise<Player> {
+    const actor = getActiveActor();
+    const isSelfSync = Boolean(actor && actor.$id === profile.$id);
+    if (!isSelfSync) {
+      assertPermission('user:manage');
+    }
+
     const resolvedLeagueId = await this.resolveActiveLeagueId(profile.leagueId);
-    const resolvedRole: Player['role'] = isPlatformAdminIdentity(profile)
+    const requestedRole: Player['role'] = isPlatformAdminIdentity(profile)
       ? 'admin'
       : profile.role || 'player';
+
+    // Prevent non-admins from assigning admin or self-escalating role
+    let resolvedRole: Player['role'] = requestedRole;
+    if (!isPlatformAdminIdentity(profile)) {
+      if (isSelfSync && actor && !canAssignRole(actor.role, requestedRole)) {
+        resolvedRole = actor.role;
+      } else if (!isSelfSync && !canAssignRole(actor?.role, requestedRole)) {
+        throw new PermissionError(
+          'platform:assign_admin',
+          actor?.role || 'guest',
+          'Only Platform Admins can assign the Admin role.'
+        );
+      }
+    }
     const playerRecord: Player = {
       $id: profile.$id,
       leagueId: resolvedLeagueId || undefined,
@@ -919,6 +967,7 @@ export class AppwriteService {
   }
 
   static async deletePlayer(playerId: string): Promise<boolean> {
+    assertPermission('user:manage');
     if (!isAppwriteConfigured) {
       const idx = mockPlayers.findIndex((p) => p.$id === playerId);
       if (idx !== -1) mockPlayers.splice(idx, 1);
@@ -1055,9 +1104,10 @@ export class AppwriteService {
       });
 
     if (isAppwriteConfigured) {
-      const [items, allEntries] = await Promise.all([
+      const [items, allEntries, rawAnnouncements] = await Promise.all([
         resilientListRows(APPWRITE_TABLES.GAMES),
         this.getAllGameEntries(),
+        resilientListRows(APPWRITE_TABLES.ANNOUNCEMENTS),
       ]);
       if (!items) return [];
 
@@ -1069,45 +1119,94 @@ export class AppwriteService {
         else entriesByGameId.set(entry.gameId, [entry]);
       }
 
+      const clockByGameId = new Map<string, GameClockSnapshot>();
+      if (Array.isArray(rawAnnouncements)) {
+        for (const ann of rawAnnouncements) {
+          const snapshot = parseClockAnnouncementPayload(ann as Record<string, unknown>);
+          if (!snapshot) continue;
+          const existing = clockByGameId.get(snapshot.gameId);
+          if (!existing || shouldAcceptIncomingClockAnchor(existing.clockAnchorAt, snapshot.clockAnchorAt)) {
+            clockByGameId.set(snapshot.gameId, snapshot);
+          }
+        }
+      }
+
       const mapped: Game[] = reconcileCounts(
-        items.map((doc: any) => ({
-          $id: doc.$id,
-          eventId:
-            typeof doc.event === 'object' && doc.event ? doc.event.$id : doc.event || doc.eventId || '',
-          seasonId:
-            typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || '',
-          venueId:
-            typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || '',
-          venueName:
-            typeof doc.venue === 'object' && doc.venue?.name ? doc.venue.name : doc.venueName || '',
-          title: doc.title || 'Untitled Game',
-          scheduledAt: doc.scheduledAt || '',
-          status: doc.status || 'scheduled',
-          dealerName: doc.dealerName || '',
-          dealers: parseJsonArray<string>(doc.dealers),
-          scribes: parseJsonArray<string>(doc.scribes),
-          pointMultiplier: normalizeMultiplier(doc.pointMultiplier),
-          isDayGame: Boolean(doc.isDayGame),
-          noGamePlayed: Boolean(doc.noGamePlayed),
-          hodRule: doc.hodRule || '',
-          purpleCount: Number(doc.purpleCount || 0),
-          buyinAmount: Number(doc.buyinAmount || 0),
-          rebuyAmount: Number(doc.rebuyAmount || 0),
-          addonAmount: Number(doc.addonAmount || 0),
-          startingChips: Number(doc.startingChips || 15000),
-          hotHandJackpot: Number(doc.hotHandJackpot || 0),
-          hotHandDescription: doc.hotHandDescription || '',
-          totalPlayersCount: doc.totalPlayersCount ?? 0,
-          remainingPlayersCount: doc.remainingPlayersCount ?? 0,
-          totalEntriesCount: doc.totalEntriesCount ?? 0,
-          currentLevelIndex: doc.currentLevelIndex || 0,
-          secondsRemainingInLevel: doc.secondsRemainingInLevel || 1200,
-          blindSchedule: OFFICIAL_BLIND_SCHEDULE,
-          isRecurring: Boolean(doc.isRecurring),
-          recurrenceRule: doc.recurrenceRule,
-          seriesId: doc.seriesId,
-          rsvpPlayerIds: parseJsonArray<string>(doc.rsvpPlayerIds),
-        })),
+        items.map((doc: any) => {
+          const clock = clockByGameId.get(doc.$id);
+          const docStatus = (doc.status || 'scheduled') as Game['status'];
+          const isTerminalDoc = docStatus === 'completed' || docStatus === 'canceled';
+          const useClock = Boolean(
+            clock && (!isTerminalDoc || shouldAcceptIncomingClockAnchor(doc.$updatedAt, clock.clockAnchorAt))
+          );
+
+          const effectiveStatus = useClock && clock ? clock.status : docStatus;
+          const effectiveLevelIndex =
+            useClock && clock
+              ? clock.currentLevelIndex
+              : typeof doc.currentLevelIndex === 'number'
+              ? doc.currentLevelIndex
+              : 0;
+          const effectiveSeconds =
+            useClock && clock
+              ? clock.secondsRemainingInLevel
+              : typeof doc.secondsRemainingInLevel === 'number'
+              ? doc.secondsRemainingInLevel
+              : 1200;
+          const effectiveAnchorAt =
+            useClock && clock
+              ? clock.clockAnchorAt
+              : typeof doc.clockAnchorAt === 'string' && doc.clockAnchorAt
+              ? doc.clockAnchorAt
+              : effectiveStatus === 'running' && typeof doc.$updatedAt === 'string'
+              ? doc.$updatedAt
+              : undefined;
+          const levelDurationOverrides = useClock && clock ? clock.levelDurationOverrides : undefined;
+
+          return {
+            $id: doc.$id,
+            eventId:
+              typeof doc.event === 'object' && doc.event ? doc.event.$id : doc.event || doc.eventId || '',
+            seasonId:
+              typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || '',
+            venueId:
+              typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || '',
+            venueName:
+              typeof doc.venue === 'object' && doc.venue?.name ? doc.venue.name : doc.venueName || '',
+            title: doc.title || 'Untitled Game',
+            scheduledAt: doc.scheduledAt || '',
+            status: effectiveStatus,
+            dealerName: doc.dealerName || '',
+            dealers: parseJsonArray<string>(doc.dealers),
+            scribes: parseJsonArray<string>(doc.scribes),
+            pointMultiplier: normalizeMultiplier(doc.pointMultiplier),
+            isDayGame: Boolean(doc.isDayGame),
+            noGamePlayed: Boolean(doc.noGamePlayed),
+            hodRule: doc.hodRule || '',
+            purpleCount: Number(doc.purpleCount || 0),
+            buyinAmount: Number(doc.buyinAmount || 0),
+            rebuyAmount: Number(doc.rebuyAmount || 0),
+            addonAmount: Number(doc.addonAmount || 0),
+            startingChips: Number(doc.startingChips || 15000),
+            hotHandJackpot: Number(doc.hotHandJackpot || 0),
+            hotHandDescription: doc.hotHandDescription || '',
+            totalPlayersCount: doc.totalPlayersCount ?? 0,
+            remainingPlayersCount: doc.remainingPlayersCount ?? 0,
+            totalEntriesCount: doc.totalEntriesCount ?? 0,
+            currentLevelIndex: effectiveLevelIndex,
+            secondsRemainingInLevel: effectiveSeconds,
+            clockAnchorAt: effectiveAnchorAt,
+            levelDurationOverrides,
+            blindSchedule: applyLevelDurationOverrides(
+              OFFICIAL_BLIND_SCHEDULE,
+              levelDurationOverrides
+            ),
+            isRecurring: Boolean(doc.isRecurring),
+            recurrenceRule: doc.recurrenceRule,
+            seriesId: doc.seriesId,
+            rsvpPlayerIds: parseJsonArray<string>(doc.rsvpPlayerIds),
+          };
+        }),
         entriesByGameId
       );
 
@@ -1130,7 +1229,17 @@ export class AppwriteService {
     const byId = new Map<string, Game>();
     for (const g of mockGames) {
       if (deletedIds.has(g.$id)) continue;
-      byId.set(g.$id, gameOverrides[g.$id] ? { ...g, ...gameOverrides[g.$id] } : g);
+      const mergedGame = gameOverrides[g.$id] ? { ...g, ...gameOverrides[g.$id] } : g;
+      byId.set(g.$id, {
+        ...mergedGame,
+        clockAnchorAt:
+          mergedGame.clockAnchorAt ||
+          (mergedGame.status === 'running' ? new Date().toISOString() : undefined),
+        blindSchedule: applyLevelDurationOverrides(
+          mergedGame.blindSchedule?.length ? mergedGame.blindSchedule : OFFICIAL_BLIND_SCHEDULE,
+          mergedGame.levelDurationOverrides
+        ),
+      });
     }
     for (const [id, override] of Object.entries(gameOverrides)) {
       if (deletedIds.has(id) || byId.has(id) || !override.title) continue;
@@ -1161,11 +1270,18 @@ export class AppwriteService {
         remainingPlayersCount: Number(override.remainingPlayersCount || 0),
         totalEntriesCount: Number(override.totalEntriesCount || 0),
         currentLevelIndex: Number(override.currentLevelIndex || 0),
-        secondsRemainingInLevel: Number(override.secondsRemainingInLevel || 1200),
-        blindSchedule:
+        secondsRemainingInLevel:
+          typeof override.secondsRemainingInLevel === 'number'
+            ? override.secondsRemainingInLevel
+            : 1200,
+        clockAnchorAt: override.clockAnchorAt,
+        levelDurationOverrides: override.levelDurationOverrides,
+        blindSchedule: applyLevelDurationOverrides(
           override.blindSchedule && override.blindSchedule.length > 0
             ? override.blindSchedule
             : OFFICIAL_BLIND_SCHEDULE,
+          override.levelDurationOverrides
+        ),
         isRecurring: Boolean(override.isRecurring),
         recurrenceRule: override.recurrenceRule,
         seriesId: override.seriesId,
@@ -1187,8 +1303,17 @@ export class AppwriteService {
     return merged;
   }
 
-  // Toggle Player RSVP for a scheduled tournament
+  // Toggle Player RSVP for a scheduled tournament (authenticated users only; self unless staff)
   static async toggleRSVP(gameId: string, playerId: string): Promise<Game> {
+    assertPermission('game:rsvp');
+    const actor = getActiveActor();
+    if (actor && actor.$id !== playerId && !hasPermission(actor.role, 'game:seat_players')) {
+      throw new PermissionError(
+        'game:seat_players',
+        actor.role,
+        'Players can only manage their own tournament RSVP.'
+      );
+    }
     const games = await this.getGames();
     const game = games.find((g) => g.$id === gameId);
     if (!game) throw new Error('Game not found');
@@ -1227,12 +1352,17 @@ export class AppwriteService {
     return allEntries.filter((entry) => entry.gameId === gameId);
   }
 
-  // Fetch Announcements (strictly Appwrite rows when Appwrite is configured)
+  // Fetch Announcements (strictly Appwrite rows when Appwrite is configured; excludes ephemeral live score events)
   static async getAnnouncements(): Promise<Announcement[]> {
     if (isAppwriteConfigured) {
       const items = await resilientListRows(APPWRITE_TABLES.ANNOUNCEMENTS);
       if (!items) return [];
       return items
+        .filter(
+          (doc: any) =>
+            doc.type !== LIVE_SCORE_EVENT_ANNOUNCEMENT_TYPE &&
+            doc.type !== GAME_CLOCK_ANNOUNCEMENT_TYPE
+        )
         .map((doc: any) => ({
           $id: doc.$id,
           title: doc.title || '',
@@ -1282,6 +1412,7 @@ export class AppwriteService {
   static async createAnnouncement(
     data: Omit<Announcement, '$id' | 'createdAt'>
   ): Promise<Announcement> {
+    assertPermission('announcement:manage');
     const newId = ID.unique();
     const createdAt = new Date().toISOString();
     const payload: Record<string, unknown> = {
@@ -1318,6 +1449,7 @@ export class AppwriteService {
     announcementId: string,
     updates: Partial<Announcement>
   ): Promise<boolean> {
+    assertPermission('announcement:manage');
     if (!isAppwriteConfigured) {
       const idx = mockAnnouncements.findIndex((a) => a.$id === announcementId);
       if (idx !== -1) {
@@ -1337,6 +1469,7 @@ export class AppwriteService {
   }
 
   static async deleteAnnouncement(announcementId: string): Promise<boolean> {
+    assertPermission('announcement:manage');
     if (!isAppwriteConfigured) {
       const idx = mockAnnouncements.findIndex((a) => a.$id === announcementId);
       if (idx !== -1) {
@@ -1363,6 +1496,41 @@ export class AppwriteService {
       }
     }
     return true;
+  }
+
+  /**
+   * Publishes an exact canonical LiveScoreNotification payload over Appwrite Realtime
+   * (using an ephemeral inactive row in `announcements` filtered out of banner queries)
+   * so every device viewing the game sees the exact same hand, message, and points.
+   */
+  static async publishLiveScoreNotification(notification: LiveScoreNotification): Promise<boolean> {
+    if (!hasPermission(getActiveActor()?.role, 'game:score')) {
+      return false;
+    }
+    if (!isAppwriteConfigured || getMissingTables().has(APPWRITE_TABLES.ANNOUNCEMENTS)) {
+      return false;
+    }
+    const serialized = JSON.stringify(notification);
+    if (serialized.length > 1950) return false;
+
+    const rowId = await resilientCreateRow(APPWRITE_TABLES.ANNOUNCEMENTS, ID.unique(), {
+      title: notification.headline.slice(0, 250),
+      content: serialized,
+      type: LIVE_SCORE_EVENT_ANNOUNCEMENT_TYPE,
+      isActive: false,
+      createdAt: new Date(notification.createdAt || Date.now()).toISOString(),
+    });
+
+    if (rowId) {
+      // Ephemeral cleanup so score event broadcasts never accumulate in the database
+      setTimeout(() => {
+        void tablesDb
+          .deleteRow(DATABASE_ID, APPWRITE_TABLES.ANNOUNCEMENTS, rowId)
+          .catch(() => {});
+      }, 20000);
+      return true;
+    }
+    return false;
   }
 
   // Fetch Current Hot Hand Target (null if none exists in Appwrite)
@@ -1423,9 +1591,11 @@ export class AppwriteService {
     actorRole?: UserRole,
     onProgress?: (status: string) => void
   ): Promise<{ deletedRows: number; seededRows: number; usedAppwrite: boolean }> {
-    if (actorRole !== 'admin') {
-      throw new Error('Unauthorized: Only App Admins (role: admin) can clear and re-seed data.');
-    }
+    assertPermission(
+      'platform:reseed',
+      actorRole,
+      'Unauthorized: Only Platform Admins (role: admin) can clear and re-seed data.'
+    );
 
     this.clearLocalCaches();
 
@@ -1705,9 +1875,166 @@ export class AppwriteService {
   // --- MUTATION METHODS ---
 
   /**
+   * Persist the authoritative backend game clock anchor atomically.
+   *
+   * Writes the dedicated backend clock state row (`clk_<gameId>` in `announcements` with
+   * `type: 'game_clock_state'`, `isActive: false`) so Appwrite stamps a pure, uncorrupted
+   * server `$updatedAt` immune to non-clock game mutations (e.g. eliminations or RSVPs)
+   * AND syncs `status`, `currentLevelIndex`, `secondsRemainingInLevel`, and `clockAnchorAt`
+   * on the `games` row in a single update.
+   */
+  static async saveGameClockState(
+    gameId: string,
+    state: {
+      status: Game['status'];
+      currentLevelIndex: number;
+      secondsRemainingInLevel: number;
+      levelDurationOverrides?: Record<number, number>;
+    }
+  ): Promise<GameClockSnapshot> {
+    assertPermission('clock:manage');
+    const cleanLevelIndex = Math.max(0, Math.floor(state.currentLevelIndex));
+    const cleanSeconds = Math.max(0, Math.floor(state.secondsRemainingInLevel));
+    const overrides =
+      state.levelDurationOverrides && Object.keys(state.levelDurationOverrides).length > 0
+        ? state.levelDurationOverrides
+        : undefined;
+
+    if (!isAppwriteConfigured) {
+      const anchorAt = new Date().toISOString();
+      const snapshot: GameClockSnapshot = {
+        gameId,
+        status: state.status,
+        currentLevelIndex: cleanLevelIndex,
+        secondsRemainingInLevel: cleanSeconds,
+        clockAnchorAt: anchorAt,
+        ...(overrides ? { levelDurationOverrides: overrides } : {}),
+      };
+      saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, {
+        status: state.status,
+        currentLevelIndex: cleanLevelIndex,
+        secondsRemainingInLevel: cleanSeconds,
+        clockAnchorAt: anchorAt,
+        levelDurationOverrides: overrides,
+      });
+      AppwriteRealtime.broadcastClockState(snapshot);
+      return snapshot;
+    }
+
+    const clockRowId = getClockRowId(gameId);
+    const clockContent = JSON.stringify({
+      gameId,
+      status: state.status,
+      currentLevelIndex: cleanLevelIndex,
+      secondsRemainingInLevel: cleanSeconds,
+      ...(overrides ? { levelDurationOverrides: overrides } : {}),
+    });
+    const announcementPayload: Record<string, unknown> = {
+      title: gameId,
+      content: clockContent,
+      type: GAME_CLOCK_ANNOUNCEMENT_TYPE,
+      isActive: false,
+      createdAt: new Date(getServerNowMs()).toISOString(),
+    };
+
+    let serverAnchorAt: string | undefined;
+
+    if (!getMissingTables().has(APPWRITE_TABLES.ANNOUNCEMENTS)) {
+      const reqStart = Date.now();
+      try {
+        const updated = await tablesDb.updateRow(
+          DATABASE_ID,
+          APPWRITE_TABLES.ANNOUNCEMENTS,
+          clockRowId,
+          announcementPayload as any
+        );
+        const stamped = (updated as any)?.$updatedAt || (updated as any)?.$createdAt;
+        if (typeof stamped === 'string' && stamped) {
+          serverAnchorAt = stamped;
+          calibrateServerClockFromResponse(stamped, reqStart, Date.now());
+        }
+      } catch (updateErr: unknown) {
+        const code = getAppwriteErrorCode(updateErr);
+        if (code === 404 && !isTableNotFoundError(updateErr)) {
+          const createStart = Date.now();
+          try {
+            const created = await tablesDb.createRow(
+              DATABASE_ID,
+              APPWRITE_TABLES.ANNOUNCEMENTS,
+              clockRowId,
+              announcementPayload as any
+            );
+            const stamped = (created as any)?.$updatedAt || (created as any)?.$createdAt;
+            if (typeof stamped === 'string' && stamped) {
+              serverAnchorAt = stamped;
+              calibrateServerClockFromResponse(stamped, createStart, Date.now());
+            }
+          } catch {
+            // Fallback to databases API below if needed
+          }
+        } else if (!isTableNotFoundError(updateErr) && code !== 400 && code !== 401 && code !== 403) {
+          try {
+            const updatedDoc = await databases.updateDocument(
+              DATABASE_ID,
+              APPWRITE_TABLES.ANNOUNCEMENTS,
+              clockRowId,
+              announcementPayload as any
+            );
+            const stamped = updatedDoc.$updatedAt || updatedDoc.$createdAt;
+            if (stamped) {
+              serverAnchorAt = stamped;
+              calibrateServerClockFromResponse(stamped, reqStart, Date.now());
+            }
+          } catch (docErr: unknown) {
+            if (getAppwriteErrorCode(docErr) === 404 && !isTableNotFoundError(docErr)) {
+              const createStart = Date.now();
+              try {
+                const createdDoc = await databases.createDocument(
+                  DATABASE_ID,
+                  APPWRITE_TABLES.ANNOUNCEMENTS,
+                  clockRowId,
+                  announcementPayload as any
+                );
+                const stamped = createdDoc.$updatedAt || createdDoc.$createdAt;
+                if (stamped) {
+                  serverAnchorAt = stamped;
+                  calibrateServerClockFromResponse(stamped, createStart, Date.now());
+                }
+              } catch {
+                // Ignore and fall back to games row update
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const finalAnchorAt = serverAnchorAt || new Date(getServerNowMs()).toISOString();
+
+    await resilientUpdateRow(APPWRITE_TABLES.GAMES, gameId, {
+      status: state.status,
+      currentLevelIndex: cleanLevelIndex,
+      secondsRemainingInLevel: cleanSeconds,
+      clockAnchorAt: finalAnchorAt,
+    });
+
+    const snapshot: GameClockSnapshot = {
+      gameId,
+      status: state.status,
+      currentLevelIndex: cleanLevelIndex,
+      secondsRemainingInLevel: cleanSeconds,
+      clockAnchorAt: finalAnchorAt,
+      ...(overrides ? { levelDurationOverrides: overrides } : {}),
+    };
+    AppwriteRealtime.broadcastClockState(snapshot);
+    return snapshot;
+  }
+
+  /**
    * Update live game blind level and countdown
    */
   static async updateGameClock(gameId: string, currentLevelIndex: number, secondsRemainingInLevel: number): Promise<boolean> {
+    assertPermission('clock:manage');
     saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, {
       currentLevelIndex,
       secondsRemainingInLevel,
@@ -1724,6 +2051,7 @@ export class AppwriteService {
    * Update Game Status (e.g., 'running' -> 'paused' -> 'completed')
    */
   static async updateGameStatus(gameId: string, status: 'scheduled' | 'running' | 'paused' | 'completed' | 'canceled'): Promise<boolean> {
+    assertPermission('clock:manage');
     saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, { status });
     if (!isAppwriteConfigured) return true;
     await resilientUpdateRow(APPWRITE_TABLES.GAMES, gameId, { status });
@@ -1734,6 +2062,7 @@ export class AppwriteService {
    * Eliminate a player from a live tournament
    */
   static async eliminatePlayer(gameId: string, entryId: string, finishPosition: number, remainingPlayersCount: number): Promise<boolean> {
+    assertPermission('game:score');
     if (!isAppwriteConfigured) return true;
     try {
       await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, entryId, {
@@ -1764,6 +2093,7 @@ export class AppwriteService {
    * Update Hot Hand Jackpot Amount
    */
   static async updateJackpotPool(jackpotId: string, currentPool: number): Promise<boolean> {
+    assertPermission('game:score');
     if (!isAppwriteConfigured) return true;
     try {
       await tablesDb.updateRow(DATABASE_ID, APPWRITE_TABLES.HOT_HANDS, jackpotId, {
@@ -1818,6 +2148,7 @@ export class AppwriteService {
   static async uploadVenueImage(
     file: File
   ): Promise<{ url: string; fileId?: string; source: 'appwrite' | 'local'; warning?: string }> {
+    assertPermission('venue:manage');
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
     if (!allowedTypes.includes(file.type)) {
       throw new Error('Please upload a JPG, PNG, WebP, or GIF image.');
@@ -1853,6 +2184,7 @@ export class AppwriteService {
   }
 
   static async deleteVenueImage(imageUrl?: string): Promise<void> {
+    assertPermission('venue:manage');
     if (!isAppwriteConfigured || !imageUrl) return;
     const match = imageUrl.match(
       new RegExp(`/buckets/${VENUE_IMAGES_BUCKET_ID}/files/([^/]+)/`)
@@ -1866,6 +2198,7 @@ export class AppwriteService {
   }
 
   static async createVenue(venueData: Omit<Venue, '$id'>): Promise<Venue> {
+    assertPermission('venue:manage');
     const newId = ID.unique();
     const resolvedLeagueId = await this.resolveActiveLeagueId(venueData.leagueId);
     const payload: Record<string, unknown> = {
@@ -1899,6 +2232,7 @@ export class AppwriteService {
   }
 
   static async updateVenue(venueId: string, updates: Partial<Venue>): Promise<boolean> {
+    assertPermission('venue:manage');
     if (!isAppwriteConfigured) {
       saveOverride<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY, venueId, updates);
       const idx = mockVenues.findIndex((v) => v.$id === venueId);
@@ -1919,6 +2253,7 @@ export class AppwriteService {
   }
 
   static async deleteVenue(venueId: string): Promise<boolean> {
+    assertPermission('venue:manage');
     if (!isAppwriteConfigured) {
       try {
         const rawDeleted = localStorage.getItem(LOCAL_STORAGE_VENUE_DELETED_KEY);
@@ -1948,6 +2283,7 @@ export class AppwriteService {
   // ==========================================
 
   static async createSeason(seasonData: Omit<Season, '$id'>): Promise<Season> {
+    assertPermission('season:manage');
     const newId = ID.unique();
     const resolvedLeagueId = await this.resolveActiveLeagueId(seasonData.leagueId);
     const payload: Record<string, unknown> = {
@@ -1975,6 +2311,7 @@ export class AppwriteService {
   }
 
   static async updateSeason(seasonId: string, updates: Partial<Season>): Promise<boolean> {
+    assertPermission('season:manage');
     if (!isAppwriteConfigured) return true;
     try {
       const payload: Record<string, any> = {};
@@ -1992,6 +2329,7 @@ export class AppwriteService {
   }
 
   static async deleteSeason(seasonId: string): Promise<boolean> {
+    assertPermission('season:manage');
     if (!isAppwriteConfigured) return true;
     try {
       await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.SEASONS, seasonId);
@@ -2003,6 +2341,7 @@ export class AppwriteService {
   }
 
   static async setActiveSeason(seasonId: string, allSeasons: Season[]): Promise<Season[]> {
+    assertPermission('season:manage');
     const updated = allSeasons.map((s) => ({
       ...s,
       isActive: s.$id === seasonId,
@@ -2032,6 +2371,7 @@ export class AppwriteService {
   // ==========================================
 
   static async createGame(gameData: Omit<Game, '$id'>): Promise<Game> {
+    assertPermission('game:schedule');
     const newId = ID.unique();
     const payload: Record<string, unknown> = {
       title: gameData.title,
@@ -2085,6 +2425,34 @@ export class AppwriteService {
   }
 
   static async updateGame(gameId: string, updates: Partial<Game>): Promise<boolean> {
+    const hasScheduleMutation =
+      updates.title !== undefined ||
+      updates.scheduledAt !== undefined ||
+      updates.venueId !== undefined ||
+      updates.venueName !== undefined ||
+      updates.seasonId !== undefined ||
+      updates.eventId !== undefined ||
+      updates.startingChips !== undefined ||
+      updates.buyinAmount !== undefined ||
+      updates.rebuyAmount !== undefined ||
+      updates.addonAmount !== undefined ||
+      updates.isRecurring !== undefined ||
+      updates.recurrenceRule !== undefined ||
+      updates.seriesId !== undefined;
+    const hasClockMutation =
+      updates.status !== undefined ||
+      updates.currentLevelIndex !== undefined ||
+      updates.secondsRemainingInLevel !== undefined ||
+      updates.clockAnchorAt !== undefined;
+
+    if (hasScheduleMutation) {
+      assertPermission('game:schedule');
+    } else if (hasClockMutation) {
+      assertPermission('clock:manage');
+    } else {
+      assertPermission('game:score');
+    }
+
     if (!isAppwriteConfigured) {
       const localIdx = mockGames.findIndex((g) => g.$id === gameId);
       if (localIdx !== -1) {
@@ -2117,6 +2485,7 @@ export class AppwriteService {
     if (updates.totalEntriesCount !== undefined) payload.totalEntriesCount = updates.totalEntriesCount;
     if (updates.currentLevelIndex !== undefined) payload.currentLevelIndex = updates.currentLevelIndex;
     if (updates.secondsRemainingInLevel !== undefined) payload.secondsRemainingInLevel = updates.secondsRemainingInLevel;
+    if (updates.clockAnchorAt !== undefined) payload.clockAnchorAt = updates.clockAnchorAt;
     if (updates.rsvpPlayerIds !== undefined) payload.rsvpPlayerIds = JSON.stringify(updates.rsvpPlayerIds);
     if (updates.venueId !== undefined) payload.venueId = updates.venueId;
     if (updates.venueName !== undefined) payload.venueName = updates.venueName;
@@ -2127,6 +2496,7 @@ export class AppwriteService {
   }
 
   static async deleteGame(gameId: string): Promise<boolean> {
+    assertPermission('game:delete');
     if (!isAppwriteConfigured) {
       try {
         const rawDeleted = localStorage.getItem(LOCAL_STORAGE_GAME_DELETED_KEY);
@@ -2148,6 +2518,10 @@ export class AppwriteService {
 
     try {
       await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId);
+      // Best-effort cleanup of dedicated clock state row
+      void tablesDb
+        .deleteRow(DATABASE_ID, APPWRITE_TABLES.ANNOUNCEMENTS, getClockRowId(gameId))
+        .catch(() => {});
       return true;
     } catch (e) {
       console.error('Failed to delete game from Appwrite:', e);
@@ -2166,6 +2540,7 @@ export class AppwriteService {
     seatNumber: number,
     currentGame: Game
   ): Promise<GameEntry> {
+    assertPermission('game:seat_players');
     const newId = ID.unique();
     // Players seated after the 1:15 mark do not auto-receive Show Up points
     const seatedAfterCutoff = hasReachedShowUpCutoff(currentGame);
@@ -2252,6 +2627,7 @@ export class AppwriteService {
     entryId: string,
     updates: Partial<GameEntry>
   ): Promise<boolean> {
+    assertPermission('game:score');
     if (!isAppwriteConfigured) {
       const localIdx = mockGameEntries.findIndex((e) => e.$id === entryId);
       if (localIdx !== -1) {
@@ -2290,6 +2666,7 @@ export class AppwriteService {
     rebuysCount: number,
     currentGame: Game
   ): Promise<boolean> {
+    assertPermission('game:score');
     saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, entryId, { rebuysCount });
     if (!isAppwriteConfigured) return true;
     await resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, entryId, { rebuysCount });
@@ -2303,6 +2680,7 @@ export class AppwriteService {
     entryId: string,
     addonsCount: number
   ): Promise<boolean> {
+    assertPermission('game:score');
     saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, entryId, { addonsCount });
     if (!isAppwriteConfigured) return true;
     await resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, entryId, { addonsCount });
@@ -2314,6 +2692,7 @@ export class AppwriteService {
     tableNumber: number,
     seatNumber: number
   ): Promise<boolean> {
+    assertPermission('game:seat_players');
     saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, entryId, {
       tableNumber,
       seatNumber,
@@ -2340,6 +2719,7 @@ export class AppwriteService {
       isMuck?: boolean;
     }
   ): Promise<boolean> {
+    assertPermission('game:score');
     const status: GameEntryStatus = options?.isMuck ? 'MUCK' : 'ELIMINATED';
     const koType = options?.koType === undefined ? 'K' : options.koType;
 
@@ -2440,6 +2820,7 @@ export class AppwriteService {
     gameId: string,
     results: FinalizedEntryResult[]
   ): Promise<boolean> {
+    assertPermission('game:finalize');
     if (!isAppwriteConfigured) {
       // Sync local offline mock caches
       const gameIdx = mockGames.findIndex((g) => g.$id === gameId);

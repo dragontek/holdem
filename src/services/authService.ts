@@ -1,4 +1,11 @@
 import { account, isAppwriteConfigured, isPlatformAdminIdentity, ID, OAuthProvider } from '../lib/appwrite';
+import {
+  assertPermission,
+  canAssignRole as canAssignRolePolicy,
+  canModifyUser as canModifyUserPolicy,
+  hasPermission,
+  setActiveActor,
+} from '../lib/permissions';
 import type { SuitIcon, UserProfile, UserRole } from '../types/holdem';
 import { AppwriteService } from './appwriteService';
 import { mockUsers } from './mockData';
@@ -84,6 +91,86 @@ function setAppwriteSessionActive(active: boolean): void {
   }
 }
 
+function clearLocalSessionArtifacts(): void {
+  setAppwriteSessionActive(false);
+  try {
+    localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
+    localStorage.removeItem('cookieFallback');
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function getAuthErrorCode(err: unknown): number | null {
+  if (typeof err === 'object' && err !== null && 'code' in err) {
+    const code = Number((err as { code?: unknown }).code);
+    return Number.isFinite(code) ? code : null;
+  }
+  return null;
+}
+
+function isSessionActiveConflict(err: unknown): boolean {
+  const type =
+    typeof err === 'object' && err !== null && 'type' in err
+      ? String((err as { type?: unknown }).type ?? '')
+      : '';
+  const msg =
+    typeof err === 'object' && err !== null && 'message' in err
+      ? String((err as { message?: unknown }).message ?? '')
+      : '';
+  return (
+    type === 'user_session_already_exists' ||
+    /session is active/i.test(msg) ||
+    /prohibited when a session/i.test(msg)
+  );
+}
+
+/**
+ * Unconditionally clears any active Appwrite session on the server (including HTTP-only
+ * session cookies that aren't reflected in localStorage) and removes stale local flags.
+ */
+async function clearCurrentAppwriteSession(deleteAllFallback = false): Promise<void> {
+  if (!isAppwriteConfigured) return;
+  try {
+    await account.deleteSession('current');
+  } catch (err: unknown) {
+    const code = getAuthErrorCode(err);
+    // 401 means no session was active on the server; anything else can try deleteSessions when requested
+    if (deleteAllFallback && code !== 401) {
+      try {
+        await account.deleteSessions();
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+  clearLocalSessionArtifacts();
+}
+
+/**
+ * Creates a fresh Appwrite email/password session, automatically cleaning up any lingering
+ * active session cookie if Appwrite responds with `user_session_already_exists`.
+ */
+async function createEmailSessionCleanly(email: string, password: string): Promise<void> {
+  if (hasActiveAppwriteSession()) {
+    await clearCurrentAppwriteSession();
+  }
+
+  try {
+    await account.createEmailPasswordSession(email, password);
+    setAppwriteSessionActive(true);
+    return;
+  } catch (err: unknown) {
+    if (!isSessionActiveConflict(err)) {
+      throw err;
+    }
+    // An HTTP-only Appwrite session cookie was still active on the server; terminate it and retry once.
+    await clearCurrentAppwriteSession(true);
+    await account.createEmailPasswordSession(email, password);
+    setAppwriteSessionActive(true);
+  }
+}
+
 function isExplicitlySignedOut(): boolean {
   try {
     return localStorage.getItem(LOCAL_STORAGE_SIGNED_OUT_KEY) === 'true';
@@ -107,6 +194,9 @@ function mapAppwriteAuthError(err: unknown, fallbackMessage: string): string {
   }
   if (type === 'user_invalid_credentials' || /invalid credentials/i.test(msg)) {
     return 'Invalid username/email or password. Please check your credentials and try again.';
+  }
+  if (isSessionActiveConflict(err)) {
+    return 'An existing session was still active. Please try signing in again.';
   }
   if (type === 'general_rate_limit_exceeded') {
     return 'Too many attempts. Please wait a moment and try again.';
@@ -263,53 +353,73 @@ export class AuthService {
     }
 
     if (isAppwriteConfigured) {
-      if (!isExplicitlySignedOut() || isOAuthReturn) {
-        try {
-          const user = await account.get();
-          const prefRole = user.prefs?.role as UserRole | undefined;
-          const nickname =
-            typeof user.prefs?.username === 'string' && user.prefs.username
-              ? user.prefs.username
-              : user.name || user.email.split('@')[0];
+      // Always re-link against Appwrite's server session (HTTP-only cookie or cookieFallback)
+      // so refreshes and cross-tab logins restore the active session reliably.
+      try {
+        const user = await account.get();
+        const prefRole = user.prefs?.role as UserRole | undefined;
+        const nickname =
+          typeof user.prefs?.username === 'string' && user.prefs.username
+            ? user.prefs.username
+            : user.name || user.email.split('@')[0];
 
-          const rawProfile: UserProfile = {
-            $id: user.$id,
-            name: user.name || nickname,
-            nickname,
-            email: user.email,
-            role: isPlatformAdminIdentity({ name: user.name, nickname, email: user.email })
-              ? 'admin'
-              : prefRole || this.detectRoleFromEmail(user.email),
-            suitIcon: toSuitIcon(user.prefs?.suitIcon),
-            isMember: true,
-            totalPoints: Number(user.prefs?.totalPoints || 0),
-            careerWins: Number(user.prefs?.careerWins || 0),
-            careerKOs: Number(user.prefs?.careerKOs || 0),
-            gamesPlayed: Number(user.prefs?.gamesPlayed || 0),
-          };
-          const profile = await this.enrichFromLeaguePlayer(rawProfile);
-          setAppwriteSessionActive(true);
-          localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
-          if (profile.role === 'admin' && prefRole !== 'admin') {
-            try {
-              await account.updatePrefs({ ...user.prefs, role: 'admin' });
-            } catch {}
-            await this.syncProfileDirectory(profile);
-          } else if (isOAuthReturn) {
-            await this.syncProfileDirectory(profile);
-          }
-          return profile;
-        } catch {
-          setAppwriteSessionActive(false);
+        const rawProfile: UserProfile = {
+          $id: user.$id,
+          name: user.name || nickname,
+          nickname,
+          email: user.email,
+          role: isPlatformAdminIdentity({ name: user.name, nickname, email: user.email })
+            ? 'admin'
+            : prefRole || this.detectRoleFromEmail(user.email),
+          suitIcon: toSuitIcon(user.prefs?.suitIcon),
+          isMember: true,
+          totalPoints: Number(user.prefs?.totalPoints || 0),
+          careerWins: Number(user.prefs?.careerWins || 0),
+          careerKOs: Number(user.prefs?.careerKOs || 0),
+          gamesPlayed: Number(user.prefs?.gamesPlayed || 0),
+        };
+        const profile = await this.enrichFromLeaguePlayer(rawProfile);
+        setActiveActor(profile);
+        setAppwriteSessionActive(true);
+        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+        if (profile.role === 'admin' && prefRole !== 'admin') {
+          try {
+            await account.updatePrefs({ ...user.prefs, role: 'admin' });
+          } catch {}
+          await this.syncProfileDirectory(profile);
+        } else if (isOAuthReturn) {
+          await this.syncProfileDirectory(profile);
         }
+        return profile;
+      } catch (err: unknown) {
+        const code = getAuthErrorCode(err);
+        if (code === 401 || code === 403) {
+          // Confirmed no active session on Appwrite server — clean up local artifacts
+          setActiveActor(null);
+          clearLocalSessionArtifacts();
+          return null;
+        }
+        // Transient network error on refresh: preserve cached profile if a live session was active
+        if (hasActiveAppwriteSession()) {
+          try {
+            const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+            if (cached) {
+              const parsed = JSON.parse(cached) as UserProfile;
+              setActiveActor(parsed);
+              return parsed;
+            }
+          } catch {
+            // Ignore corrupt cache
+          }
+        }
+        setActiveActor(null);
+        return null;
       }
-
-      // Do not auto-populate demo users ("Sarah Connor", etc.) when Appwrite is configured
-      return null;
     }
 
     // Respect explicit sign-out so guests remain signed out across reloads
     if (isExplicitlySignedOut()) {
+      setActiveActor(null);
       return null;
     }
 
@@ -317,13 +427,16 @@ export class AuthService {
     const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
     if (cached) {
       try {
-        return JSON.parse(cached) as UserProfile;
+        const parsed = JSON.parse(cached) as UserProfile;
+        setActiveActor(parsed);
+        return parsed;
       } catch {
         // Ignore corrupt cache
       }
     }
 
     // Default to manager for initial offline demo experience only
+    setActiveActor(DEMO_USERS.manager);
     return DEMO_USERS.manager;
   }
 
@@ -360,17 +473,12 @@ export class AuthService {
     if (isAppwriteConfigured) {
       try {
         if (hasActiveAppwriteSession()) {
-          try {
-            await account.deleteSession('current');
-          } catch {
-            // Ignore stale session cleanup error
-          }
+          await clearCurrentAppwriteSession();
         }
 
         const newUserId = ID.unique();
         await account.create(newUserId, resolvedEmail, input.password, rawUsername);
-        await account.createEmailPasswordSession(resolvedEmail, input.password);
-        setAppwriteSessionActive(true);
+        await createEmailSessionCleanly(resolvedEmail, input.password);
 
         try {
           await account.updatePrefs({
@@ -396,6 +504,7 @@ export class AuthService {
           gamesPlayed: 0,
           leagueId: 'league_1',
         };
+        setActiveActor(profile);
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
         await this.syncProfileDirectory(profile);
 
@@ -437,6 +546,7 @@ export class AuthService {
       leagueId: 'league_1',
     };
     saveOfflinePassword(resolvedEmail, input.password);
+    setActiveActor(profile);
     localStorage.removeItem(LOCAL_STORAGE_SIGNED_OUT_KEY);
     localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
     await this.syncProfileDirectory(profile);
@@ -459,16 +569,7 @@ export class AuthService {
 
     if (isAppwriteConfigured) {
       try {
-        if (hasActiveAppwriteSession()) {
-          try {
-            await account.deleteSession('current');
-          } catch {
-            // Ignore stale session cleanup
-          }
-        }
-
-        await account.createEmailPasswordSession(resolvedEmail, password);
-        setAppwriteSessionActive(true);
+        await createEmailSessionCleanly(resolvedEmail, password);
         const user = await account.get();
         const nickname =
           typeof user.prefs?.username === 'string' && user.prefs.username
@@ -502,11 +603,14 @@ export class AuthService {
           gamesPlayed: Number(user.prefs?.gamesPlayed || 0),
         };
         const profile = await this.enrichFromLeaguePlayer(rawProfile);
+        setActiveActor(profile);
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
         await this.syncProfileDirectory(profile);
         return { user: profile };
       } catch (err: unknown) {
-        setAppwriteSessionActive(false);
+        if (getAuthErrorCode(err) === 401) {
+          setAppwriteSessionActive(false);
+        }
         return {
           user: null,
           error: mapAppwriteAuthError(err, 'Invalid username/email or password.'),
@@ -528,6 +632,7 @@ export class AuthService {
       if (storedPass && storedPass !== password) {
         return { user: null, error: 'Invalid username/email or password.' };
       }
+      setActiveActor(existing);
       localStorage.removeItem(LOCAL_STORAGE_SIGNED_OUT_KEY);
       localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(existing));
       return { user: existing };
@@ -556,6 +661,11 @@ export class AuthService {
     const failureUrl = baseUrl;
 
     try {
+      try {
+        localStorage.removeItem(LOCAL_STORAGE_SIGNED_OUT_KEY);
+      } catch {
+        // Ignore storage errors
+      }
       account.createOAuth2Session(oauthProvider, successUrl, failureUrl);
       return { ok: true };
     } catch (err: unknown) {
@@ -567,11 +677,12 @@ export class AuthService {
   }
 
   /**
-   * Switch to a specific Demo Role immediately for testing
+   * Switch to a specific Demo Role immediately for testing (offline demo mode only)
    */
   static switchDemoRole(role: UserRole): UserProfile {
     const profile = DEMO_USERS[role];
     setAppwriteSessionActive(false);
+    setActiveActor(profile);
     localStorage.removeItem(LOCAL_STORAGE_SIGNED_OUT_KEY);
     localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
     return profile;
@@ -661,7 +772,18 @@ export class AuthService {
     newRole: UserRole,
     currentAuthUser?: UserProfile | null
   ): Promise<UserProfile[]> {
+    const actorRole = currentAuthUser?.role;
+    assertPermission('user:manage', actorRole);
+    if (!canAssignRolePolicy(actorRole, newRole)) {
+      throw new Error('Only Platform Admins can assign the Admin role.');
+    }
+
     const users = await this.getAllUsers();
+    const existingTarget = users.find((u) => u.$id === userId);
+    if (existingTarget && !canModifyUserPolicy(actorRole, existingTarget.role)) {
+      throw new Error('Only Platform Admins can modify an Admin account.');
+    }
+
     const updated = users.map((u) => (u.$id === userId ? { ...u, role: newRole } : u));
     if (!isAppwriteConfigured) {
       localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
@@ -686,6 +808,7 @@ export class AuthService {
         }
       }
       const updatedProfile: UserProfile = { ...currentAuthUser, role: newRole };
+      setActiveActor(updatedProfile);
       localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(updatedProfile));
     }
 
@@ -695,7 +818,16 @@ export class AuthService {
   /**
    * Create or invite a new user with a specific role
    */
-  static async createUser(name: string, email: string, role: UserRole): Promise<UserProfile> {
+  static async createUser(
+    name: string,
+    email: string,
+    role: UserRole,
+    actorRole?: UserRole
+  ): Promise<UserProfile> {
+    assertPermission('user:manage', actorRole);
+    if (actorRole !== undefined && !canAssignRolePolicy(actorRole, role)) {
+      throw new Error('Only Platform Admins can create an Admin account.');
+    }
     const newId = isAppwriteConfigured ? ID.unique() : `user_${Date.now()}`;
     const newUser: UserProfile = {
       $id: newId,
@@ -723,9 +855,14 @@ export class AuthService {
   /**
    * Delete a user from the directory
    */
-  static async deleteUser(userId: string): Promise<UserProfile[]> {
-    await AppwriteService.deletePlayer(userId);
+  static async deleteUser(userId: string, actorRole?: UserRole): Promise<UserProfile[]> {
+    assertPermission('user:manage', actorRole);
     const users = await this.getAllUsers();
+    const target = users.find((u) => u.$id === userId);
+    if (target && actorRole !== undefined && !canModifyUserPolicy(actorRole, target.role)) {
+      throw new Error('Only Platform Admins can delete an Admin account.');
+    }
+    await AppwriteService.deletePlayer(userId);
     const updated = users.filter((u) => u.$id !== userId);
     if (!isAppwriteConfigured) {
       localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
@@ -734,21 +871,19 @@ export class AuthService {
   }
 
   /**
-   * Update active User Role
+   * Update active User Role (offline demo mode only; live Appwrite roles are server-managed)
    */
   static async updateRole(newRole: UserRole): Promise<boolean> {
-    if (isAppwriteConfigured && hasActiveAppwriteSession()) {
-      try {
-        await account.updatePrefs({ role: newRole });
-      } catch {
-        // Ignore pref sync errors
-      }
+    if (isAppwriteConfigured) {
+      // Never allow client-side self-role elevation/overwrite against live Appwrite accounts
+      return false;
     }
     const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as UserProfile;
         parsed.role = newRole;
+        setActiveActor(parsed);
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(parsed));
       } catch {
         // Ignore storage error
@@ -758,18 +893,16 @@ export class AuthService {
   }
 
   /**
-   * Logout — cleanly ends Appwrite session and keeps user signed out across reloads.
+   * Logout — cleanly ends any active Appwrite server session (even if localStorage flags
+   * were cleared or out of sync) and clears all local auth artifacts.
    */
   static async logout(): Promise<boolean> {
-    if (isAppwriteConfigured && hasActiveAppwriteSession()) {
-      try {
-        await account.deleteSession('current');
-      } catch {
-        // Ignore already-closed session
-      }
+    setActiveActor(null);
+    if (isAppwriteConfigured) {
+      await clearCurrentAppwriteSession(true);
+    } else {
+      clearLocalSessionArtifacts();
     }
-    setAppwriteSessionActive(false);
-    localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
     try {
       localStorage.setItem(LOCAL_STORAGE_SIGNED_OUT_KEY, 'true');
     } catch {
@@ -794,39 +927,74 @@ export class AuthService {
   // --- ROLE-BASED ACCESS CONTROL HELPERS ---
   // ==========================================
 
-  static canAccessPlatformAdmin(role?: UserRole): boolean {
-    return role === 'admin';
+  static canAccessPlatformAdmin(role?: UserRole | null): boolean {
+    return hasPermission(role, 'platform:reseed');
   }
 
-  static canCreateLeague(role?: UserRole): boolean {
-    return role === 'admin' || role === 'manager';
+  static canCreateLeague(role?: UserRole | null): boolean {
+    return hasPermission(role, 'league:create');
   }
 
-  static canAssignLeagueManager(role?: UserRole): boolean {
-    return role === 'admin' || role === 'manager';
+  static canManageLeagues(role?: UserRole | null): boolean {
+    return hasPermission(role, 'league:manage');
   }
 
-  static canAccessAdmin(role?: UserRole): boolean {
-    return role === 'admin' || role === 'manager';
+  static canAssignLeagueManager(role?: UserRole | null): boolean {
+    return hasPermission(role, 'league:assign_manager');
   }
 
-  static canAccessDirector(role?: UserRole): boolean {
-    return role === 'admin' || role === 'manager' || role === 'dealer' || role === 'scribe';
+  static canAccessAdmin(role?: UserRole | null): boolean {
+    return hasPermission(role, 'admin:access');
   }
 
-  static canManageClock(role?: UserRole): boolean {
-    return role === 'admin' || role === 'manager' || role === 'dealer';
+  static canAccessDirector(role?: UserRole | null): boolean {
+    return hasPermission(role, 'director:operate');
   }
 
-  static canManageVenues(role?: UserRole): boolean {
-    return role === 'admin' || role === 'manager';
+  static canManageClock(role?: UserRole | null): boolean {
+    return hasPermission(role, 'clock:manage');
   }
 
-  static canScheduleGames(role?: UserRole): boolean {
-    return role === 'admin' || role === 'manager';
+  static canManageVenues(role?: UserRole | null): boolean {
+    return hasPermission(role, 'venue:manage');
   }
 
-  static canRecordBusts(role?: UserRole): boolean {
-    return role === 'admin' || role === 'manager' || role === 'dealer' || role === 'scribe';
+  static canManageSeasons(role?: UserRole | null): boolean {
+    return hasPermission(role, 'season:manage');
+  }
+
+  static canScheduleGames(role?: UserRole | null): boolean {
+    return hasPermission(role, 'game:schedule');
+  }
+
+  static canManageAnnouncements(role?: UserRole | null): boolean {
+    return hasPermission(role, 'announcement:manage');
+  }
+
+  static canFinalizeTournament(role?: UserRole | null): boolean {
+    return hasPermission(role, 'game:finalize');
+  }
+
+  static canManageUsers(role?: UserRole | null): boolean {
+    return hasPermission(role, 'user:manage');
+  }
+
+  static canSeatPlayers(role?: UserRole | null): boolean {
+    return hasPermission(role, 'game:seat_players');
+  }
+
+  static canRecordBusts(role?: UserRole | null): boolean {
+    return hasPermission(role, 'game:score');
+  }
+
+  static canAssignRole(actorRole: UserRole | null | undefined, targetRole: UserRole): boolean {
+    return canAssignRolePolicy(actorRole, targetRole);
+  }
+
+  static canModifyUser(
+    actorRole: UserRole | null | undefined,
+    targetCurrentRole: UserRole
+  ): boolean {
+    return canModifyUserPolicy(actorRole, targetCurrentRole);
   }
 }

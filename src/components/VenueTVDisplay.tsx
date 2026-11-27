@@ -229,7 +229,11 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
             <Megaphone className="w-4 h-4 animate-bounce" /> LEAGUE TICKER:
           </div>
           <div className="text-xs text-slate-300 font-medium truncate">
-            {announcements[0]?.title} • {announcements[0]?.content}
+            {(() => {
+              const activeAnn = announcements.find((a) => a.isActive !== false);
+              if (!activeAnn) return 'Welcome to Jack Ten Poker League';
+              return activeAnn.content ? `${activeAnn.title} • ${activeAnn.content}` : activeAnn.title;
+            })()}
           </div>
         </div>
 

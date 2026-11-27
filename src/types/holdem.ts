@@ -166,6 +166,7 @@ export interface GameEntry {
   rebuysCount: number;
   addonsCount: number;
   status?: GameEntryStatus;
+  showUpAwarded?: boolean;
   hasDgCarryover?: boolean;
   earnedDgForNextGame?: boolean;
   survivedRebuy?: boolean;
@@ -194,11 +195,14 @@ export interface HotHandJackpot {
   isClaimed: boolean;
 }
 
+export type AnnouncementType = 'info' | 'warning' | 'danger' | 'success' | 'promo';
+
 export interface Announcement {
   $id: string;
   title: string;
   content: string;
-  type: 'urgent' | 'info' | 'promo';
+  type: AnnouncementType | 'urgent';
+  isActive?: boolean;
   createdAt: string;
 }
 

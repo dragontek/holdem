@@ -1,5 +1,6 @@
 import React from 'react';
-import type { Game, League, Season, UserProfile, Venue } from '@/types/holdem';
+import type { Announcement, Game, League, Season, UserProfile, Venue } from '@/types/holdem';
+import { ANNOUNCEMENT_TYPE_META, normalizeAnnouncementType } from '@/lib/announcements';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +10,7 @@ import {
   Calendar,
   Crown,
   Edit3,
+  Megaphone,
   PlayCircle,
   Plus,
   ShieldCheck,
@@ -31,6 +33,7 @@ export interface AdminDashboardOverviewProps {
   venues: Venue[];
   games: Game[];
   users: UserProfile[];
+  announcements: Announcement[];
   onOpenSection: (section: DashboardSectionKey) => void;
   onCreateGame: () => void;
   onCreateSeason: () => void;
@@ -39,6 +42,8 @@ export interface AdminDashboardOverviewProps {
   onCreateLeague: () => void;
   onEditGame: (game: Game) => void;
   onSelectGame?: (game: Game) => void;
+  onEditAnnouncement?: (announcement: Announcement) => void;
+  onCreateAnnouncement?: () => void;
 }
 
 export const AdminDashboardOverview: React.FC<AdminDashboardOverviewProps> = ({
@@ -47,6 +52,7 @@ export const AdminDashboardOverview: React.FC<AdminDashboardOverviewProps> = ({
   venues,
   games,
   users,
+  announcements,
   onOpenSection,
   onCreateGame,
   onCreateSeason,
@@ -55,6 +61,8 @@ export const AdminDashboardOverview: React.FC<AdminDashboardOverviewProps> = ({
   onCreateLeague,
   onEditGame,
   onSelectGame,
+  onEditAnnouncement,
+  onCreateAnnouncement,
 }) => {
   const activeSeason = seasons.find((s) => s.isActive) || seasons[0];
   const liveGames = games.filter((g) => g.status === 'running');
@@ -185,6 +193,87 @@ export const AdminDashboardOverview: React.FC<AdminDashboardOverviewProps> = ({
             </Card>
           ))}
       </div>
+
+      {/* Top Banner Announcements Manager */}
+      {(onEditAnnouncement || onCreateAnnouncement) && (
+        <Card className="p-5 border-slate-800 bg-slate-900/60 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                <Megaphone className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                  Top Banner Announcements
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Update the banner message, visibility, and alert color shown at the top of Games
+                </p>
+              </div>
+            </div>
+            {onCreateAnnouncement && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onCreateAnnouncement}
+                className="h-9 text-xs self-start sm:self-auto"
+              >
+                <Plus className="w-3.5 h-3.5" /> New Announcement
+              </Button>
+            )}
+          </div>
+
+          {announcements.length === 0 ? (
+            <div className="text-xs text-slate-500 py-2">
+              No announcements configured. Click &ldquo;New Announcement&rdquo; to post a banner.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-800/70">
+              {announcements.map((ann) => {
+                const normalizedType = normalizeAnnouncementType(ann.type);
+                const meta = ANNOUNCEMENT_TYPE_META[normalizedType];
+                const isVisible = ann.isActive !== false;
+                return (
+                  <div
+                    key={ann.$id}
+                    className="py-3 first:pt-1 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`px-2 py-0.5 text-[10px] uppercase font-extrabold tracking-wider rounded ${meta.badgeClass}`}
+                        >
+                          {meta.label}
+                        </span>
+                        <Badge variant={isVisible ? 'success' : 'secondary'} className="text-[10px]">
+                          {isVisible ? 'Visible' : 'Hidden'}
+                        </Badge>
+                        <span className="text-sm font-bold text-white truncate">{ann.title}</span>
+                      </div>
+                      {ann.content && (
+                        <p className="text-xs text-slate-400 line-clamp-1">{ann.content}</p>
+                      )}
+                    </div>
+
+                    {onEditAnnouncement && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onEditAnnouncement(ann)}
+                        className="h-9 text-xs shrink-0 self-start sm:self-auto"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-amber-400" /> Edit Banner
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Quick Access: Live & Upcoming Games */}
       {spotlightGames.length > 0 && (

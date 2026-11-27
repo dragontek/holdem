@@ -1,5 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { Game, GameEntry, Player, Venue, Season, UserRole, KnockoutCode } from '../types/holdem';
+import type {
+  Game,
+  GameEntry,
+  HandBonusCode,
+  Player,
+  Venue,
+  Season,
+  UserRole,
+  KnockoutCode,
+} from '../types/holdem';
+import {
+  createEliminationNotification,
+  diffEntryForScoreEvents,
+  type LiveScoreNotification,
+} from '@/lib/liveScoreEvents';
+import { QuickScoreStrip } from './director/QuickScoreStrip';
 import { AppwriteService } from '../services/appwriteService';
 import { AuthService } from '../services/authService';
 import { PlayerSeatingModal } from './PlayerSeatingModal';
@@ -11,8 +26,11 @@ import { PlayerScoreDialog } from './director/PlayerScoreDialog';
 import { EliminationDialog, type EliminationConfirmPayload } from './director/EliminationDialog';
 import { FinalizeTournamentDialog } from './director/FinalizeTournamentDialog';
 import {
+  BAR_BONUS_CHIP_VALUE,
+  BAR_SPEND_PER_BONUS_CHIP_USD,
   calculateEntryScore,
   formatBlindInThousands,
+  getEntryHandBonuses,
   getEntryStatus,
   hasReachedShowUpCutoff,
   PLACEMENT_POINTS,
@@ -46,6 +64,7 @@ import {
   Flame,
   Ban,
   FileText,
+  Coins,
 } from 'lucide-react';
 
 interface DirectorDeskProps {
@@ -70,6 +89,13 @@ interface DirectorDeskProps {
   onBack?: () => void;
   backLabel?: string;
   onSelectPlayer?: (player: Player) => void;
+  highlightedPlayers?: ReadonlyMap<string, LiveScoreNotification>;
+  onEmitScoreEvent?: (notification: LiveScoreNotification) => void;
+  onRecordLocalEntriesSnapshot?: (
+    gameId: string,
+    entries: GameEntry[],
+    changedEntry?: GameEntry
+  ) => void;
 }
 
 export const DirectorDesk: React.FC<DirectorDeskProps> = ({
@@ -84,6 +110,9 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   onBack,
   backLabel,
   onSelectPlayer,
+  highlightedPlayers,
+  onEmitScoreEvent,
+  onRecordLocalEntriesSnapshot,
 }) => {
   // Clock state
   const [isRunning, setIsRunning] = useState<boolean>(activeGame.status === 'running');
@@ -396,6 +425,13 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
     const synced = syncEntryCalculatedFields({ ...target, ...updates }, activeGame);
     const updatedEntries = gameEntries.map((e) => (e.$id === entryId ? synced : e));
+
+    onRecordLocalEntriesSnapshot?.(activeGame.$id, updatedEntries, synced);
+    const events = diffEntryForScoreEvents(target, synced, activeGame, updatedEntries);
+    for (const ev of events) {
+      onEmitScoreEvent?.(ev);
+    }
+
     onEntriesChange(updatedEntries);
 
     const remainingCount = updatedEntries.filter((e) => getEntryStatus(e) === 'ACTIVE').length;
@@ -415,6 +451,16 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
     const koWinnerEntry = payload.koWinnerPlayerId
       ? gameEntries.find((e) => e.playerId === payload.koWinnerPlayerId)
       : undefined;
+
+    const elimNotification = createEliminationNotification({
+      game: activeGame,
+      victim: targetEntry,
+      killer: koWinnerEntry,
+      koType: payload.koType,
+      finishPosition: finishPos,
+      isMuck: payload.isMuck,
+    });
+    onEmitScoreEvent?.(elimNotification);
 
     onEliminatePlayer(
       targetEntry.$id,
@@ -505,6 +551,15 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
             {activeGame.noGamePlayed && (
               <Badge variant="destructive">
                 <Ban className="w-3 h-3" /> No-Game (5,000)
+              </Badge>
+            )}
+            {(activeGame.purpleCount ?? 0) > 0 && (
+              <Badge
+                variant="purple"
+                title={`Scorecard turn-in accounting: ${activeGame.purpleCount} bar-spend chip(s) × $${BAR_SPEND_PER_BONUS_CHIP_USD} (+${((activeGame.purpleCount ?? 0) * BAR_BONUS_CHIP_VALUE) / 1000}k bonus chips)`}
+              >
+                <Coins className="w-3 h-3" /> Bar Chips: {activeGame.purpleCount} ($
+                {((activeGame.purpleCount ?? 0) * BAR_SPEND_PER_BONUS_CHIP_USD).toLocaleString()})
               </Badge>
             )}
           </div>
@@ -637,8 +692,10 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                 game={activeGame}
                 entries={gameEntries}
                 canEdit={canEditScorecard}
+                highlightedPlayers={highlightedPlayers}
                 onUpdateEntry={handleUpdateEntryScoring}
                 onRequestScorePlayer={(entryId) => setScoringEntryId(entryId)}
+                onRequestEliminate={(entry) => setSelectedEntryToEliminate(entry)}
               />
             </>
           )}
@@ -846,15 +903,31 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
             {/* Players Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {gameEntries.map((entry) => (
+              {gameEntries.map((entry) => {
+                const highlight = highlightedPlayers?.get(entry.playerId);
+                return (
                 <div
                   key={entry.$id}
-                  className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
-                    entry.isEliminated
+                  className={`p-3.5 rounded-xl border flex flex-col gap-2.5 transition-all ${
+                    highlight
+                      ? 'bg-amber-500/10 border-amber-400 player-award-highlight'
+                      : entry.isEliminated
                       ? 'bg-slate-950/60 border-slate-900 opacity-50'
                       : 'bg-slate-900/90 border-slate-800 hover:border-amber-500/40'
                   }`}
                 >
+                  {highlight && (
+                    <div className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-400/50 text-[11px] font-extrabold text-amber-200 flex items-center justify-between gap-2">
+                      <span className="truncate">{highlight.headline}</span>
+                      {highlight.pointsAwarded > 0 && (
+                        <span className="font-mono text-amber-300 shrink-0">
+                          +{highlight.pointsAwarded.toLocaleString()} pts
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-amber-400 shrink-0">
                       T{entry.tableNumber}S{entry.seatNumber}
@@ -865,14 +938,13 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                           const p: Player = players.find((x) => x.$id === entry.playerId) || {
                             $id: entry.playerId,
                             name: entry.playerName,
-                            email: `${entry.playerName.toLowerCase().replace(/\s+/g, '')}@holdempro.com`,
+                            email: '',
                             role: 'player',
-                            totalPoints: 10000,
-                            careerWins: 2,
+                            totalPoints: 0,
+                            careerWins: 0,
                             careerKOs: entry.kosCount,
-                            gamesPlayed: 8,
-                            leagueId: 'league_1',
-                            suitIcon: 'spades',
+                            gamesPlayed: 0,
+                            suitIcon: entry.playerSuitIcon || 'spades',
                             isMember: true,
                           };
                           onSelectPlayer(p);
@@ -923,15 +995,31 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                         type="button"
                         variant={entry.isEliminated ? 'outline' : 'default'}
                         onClick={() => setScoringEntryId(entry.$id)}
-                        className="h-11 px-4 text-xs font-bold flex-1 sm:flex-none"
+                        className="h-10 px-3.5 text-xs font-bold flex-1 sm:flex-none"
                       >
                         <SlidersHorizontal className="w-3.5 h-3.5" />
-                        {entry.isEliminated ? 'Edit Player' : 'Actions / Pts'}
+                        {entry.isEliminated ? 'Edit Player' : 'All Actions'}
                       </Button>
                     )}
                   </div>
+                  </div>
+
+                  {canEditScorecard &&
+                    activeGame.status !== 'completed' &&
+                    !entry.isEliminated &&
+                    getEntryStatus(entry) === 'ACTIVE' && (
+                      <QuickScoreStrip
+                        entry={entry}
+                        onAwardHandBonus={(target, code: HandBonusCode) => {
+                          const next = [...getEntryHandBonuses(target), code];
+                          void handleUpdateEntryScoring(target.$id, { handBonuses: next });
+                        }}
+                        onRequestBustOut={(target) => setSelectedEntryToEliminate(target)}
+                      />
+                    )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

@@ -4,9 +4,14 @@ import { QrCode, X, CheckCircle2, Sparkles, UserCheck } from 'lucide-react';
 interface QRCheckinModalProps {
   isOpen: boolean;
   onClose: () => void;
+  venueName?: string;
 }
 
-export const QRCheckinModal: React.FC<QRCheckinModalProps> = ({ isOpen, onClose }) => {
+export const QRCheckinModal: React.FC<QRCheckinModalProps> = ({
+  isOpen,
+  onClose,
+  venueName,
+}) => {
   const [pinCode, setPinCode] = useState<string>('');
   const [isCheckedIn, setIsCheckedIn] = useState<boolean>(false);
 
@@ -76,7 +81,15 @@ export const QRCheckinModal: React.FC<QRCheckinModalProps> = ({ isOpen, onClose 
               <CheckCircle2 className="w-10 h-10" />
             </div>
             <h4 className="text-lg font-bold text-white">Check-in Confirmed!</h4>
-            <p className="text-xs text-slate-300">You are registered for tonight's game at <span className="text-amber-400 font-bold">Single Barrel</span>. Table & seat assignment will appear on TV view shortly.</p>
+            <p className="text-xs text-slate-300">
+              You are registered for tonight&apos;s game
+              {venueName ? (
+                <>
+                  {' '}at <span className="text-amber-400 font-bold">{venueName}</span>
+                </>
+              ) : null}
+              . Table &amp; seat assignment will appear on TV view shortly.
+            </p>
 
             <button
               onClick={() => {

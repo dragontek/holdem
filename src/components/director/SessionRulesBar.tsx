@@ -6,7 +6,9 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { StaffMultiSelect } from '@/components/StaffMultiSelect';
+import { BAR_BONUS_CHIP_VALUE, BAR_SPEND_PER_BONUS_CHIP_USD } from '@/lib/scoring';
 import {
+  Coins,
   Flame,
   Minus,
   Plus,
@@ -130,13 +132,30 @@ export const SessionRulesBar: React.FC<SessionRulesBarProps> = ({
             </div>
           </div>
 
-          {/* Purple Counter */}
+          {/* Bar Spend Bonus Chips ("Purple" Scorecard Accounting) */}
           <div className="space-y-1.5">
-            <Label className="text-[11px] uppercase tracking-wider text-slate-400">
-              Purple (Chip / Color-Up)
+            <Label
+              className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center justify-between gap-2"
+              title="1 bonus chip per $15 spent at the bar (worth 15k chips; color varies by venue). Recorded for venue accounting & official scorecard turn-in."
+            >
+              <span className="inline-flex items-center gap-1">
+                <Coins className="w-3 h-3 text-purple-400" />
+                Bar Spend Chips (&ldquo;Purple&rdquo;)
+              </span>
+              <span className="font-mono text-[10px] text-emerald-400 normal-case tracking-normal">
+                ${(purpleCount * BAR_SPEND_PER_BONUS_CHIP_USD).toLocaleString()} bar • +
+                {((purpleCount * BAR_BONUS_CHIP_VALUE) / 1000).toFixed(0)}k
+              </span>
             </Label>
             <div className="flex items-center justify-between h-11 px-3 rounded-xl bg-slate-950 border border-slate-800">
-              <span className="text-xs font-semibold text-purple-300">Purple Count</span>
+              <div className="leading-tight">
+                <span className="text-xs font-semibold text-purple-300 block">
+                  Scorecard Turn-In
+                </span>
+                <span className="text-[10px] text-slate-500 block">
+                  ${BAR_SPEND_PER_BONUS_CHIP_USD}/chip • {(BAR_BONUS_CHIP_VALUE / 1000).toFixed(0)}k val
+                </span>
+              </div>
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
@@ -146,7 +165,7 @@ export const SessionRulesBar: React.FC<SessionRulesBarProps> = ({
                   onClick={() =>
                     onUpdateSessionRules({ purpleCount: Math.max(0, purpleCount - 1) })
                   }
-                  aria-label="Decrease Purple count"
+                  aria-label="Decrease bar spend bonus chip count"
                   className="h-9 w-9"
                 >
                   <Minus className="w-4 h-4" />
@@ -160,7 +179,7 @@ export const SessionRulesBar: React.FC<SessionRulesBarProps> = ({
                   variant="ghost"
                   disabled={isLocked}
                   onClick={() => onUpdateSessionRules({ purpleCount: purpleCount + 1 })}
-                  aria-label="Increase Purple count"
+                  aria-label="Increase bar spend bonus chip count"
                   className="h-9 w-9"
                 >
                   <Plus className="w-4 h-4" />

@@ -1,5 +1,6 @@
 import React from 'react';
 import type { UserProfile, UserRole } from '@/types/holdem';
+import { isAppwriteConfigured } from '@/lib/appwrite';
 import { AuthService, isSyntheticPlayerEmail } from '@/services/authService';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -96,35 +97,37 @@ export const AccountProfilePanel: React.FC<AccountProfilePanelProps> = ({
         </p>
       </div>
 
-      {/* Role Testing Switcher */}
-      <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-        <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wider text-slate-400 select-none">
-          Quick Role Switcher (Demo Testing)
-        </summary>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-3">
-          {(
-            [
-              { role: 'admin', label: 'Admin', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
-              { role: 'manager', label: 'Manager', icon: <Crown className="w-3.5 h-3.5" /> },
-              { role: 'dealer', label: 'Dealer', icon: <Briefcase className="w-3.5 h-3.5" /> },
-              { role: 'scribe', label: 'Scribe', icon: <PenTool className="w-3.5 h-3.5" /> },
-              { role: 'player', label: 'Player', icon: <Gamepad2 className="w-3.5 h-3.5" /> },
-            ] as const
-          ).map((item) => (
-            <Button
-              key={item.role}
-              type="button"
-              variant={currentUser.role === item.role ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => onDemoSwitch(item.role)}
-              className="h-9 justify-start text-xs"
-            >
-              {item.icon}
-              {item.label}
-            </Button>
-          ))}
-        </div>
-      </details>
+      {/* Role Testing Switcher (offline demo mode only) */}
+      {!isAppwriteConfigured && (
+        <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+          <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wider text-slate-400 select-none">
+            Quick Role Switcher (Demo Testing)
+          </summary>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-3">
+            {(
+              [
+                { role: 'admin', label: 'Admin', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
+                { role: 'manager', label: 'Manager', icon: <Crown className="w-3.5 h-3.5" /> },
+                { role: 'dealer', label: 'Dealer', icon: <Briefcase className="w-3.5 h-3.5" /> },
+                { role: 'scribe', label: 'Scribe', icon: <PenTool className="w-3.5 h-3.5" /> },
+                { role: 'player', label: 'Player', icon: <Gamepad2 className="w-3.5 h-3.5" /> },
+              ] as const
+            ).map((item) => (
+              <Button
+                key={item.role}
+                type="button"
+                variant={currentUser.role === item.role ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => onDemoSwitch(item.role)}
+                className="h-9 justify-start text-xs"
+              >
+                {item.icon}
+                {item.label}
+              </Button>
+            ))}
+          </div>
+        </details>
+      )}
 
       <Button
         type="button"

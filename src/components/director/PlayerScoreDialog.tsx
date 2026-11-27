@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Game, GameEntry, HandBonusCode, KnockoutCode } from '@/types/holdem';
 import {
   calculateEntryScore,
@@ -61,6 +61,8 @@ export const PlayerScoreDialog: React.FC<PlayerScoreDialogProps> = ({
   onAdjustAddons,
   onRequestEliminate,
 }) => {
+  const [inlineBroadcastMsg, setInlineBroadcastMsg] = useState<string>('');
+
   const sortedEntries = [...entries].sort((a, b) => {
     if (a.tableNumber !== b.tableNumber) return a.tableNumber - b.tableNumber;
     return a.seatNumber - b.seatNumber;
@@ -99,25 +101,37 @@ export const PlayerScoreDialog: React.FC<PlayerScoreDialogProps> = ({
   const countKO = (code: KnockoutCode) => knockouts.filter((c) => c === code).length;
   const countHD = (code: HandBonusCode) => handBonuses.filter((c) => c === code).length;
 
+  const flashBroadcastFeedback = (msg: string) => {
+    setInlineBroadcastMsg(msg);
+  };
+
   const adjustKO = (code: KnockoutCode, delta: 1 | -1) => {
     if (delta === 1) {
       const next = [...knockouts, code];
       onUpdateEntry(entry.$id, { knockouts: next, kosCount: next.length });
+      flashBroadcastFeedback(
+        `Broadcasted to players & TV: ${entry.playerName} just scored a ${KO_DEFINITIONS[code].label}!`
+      );
     } else {
       const idx = knockouts.lastIndexOf(code);
       if (idx === -1) return;
       const next = knockouts.filter((_, i) => i !== idx);
       onUpdateEntry(entry.$id, { knockouts: next, kosCount: next.length });
+      setInlineBroadcastMsg('');
     }
   };
 
   const adjustHD = (code: HandBonusCode, delta: 1 | -1) => {
     if (delta === 1) {
       onUpdateEntry(entry.$id, { handBonuses: [...handBonuses, code] });
+      flashBroadcastFeedback(
+        `Broadcasted to players & TV: ${entry.playerName} earned ${HAND_BONUS_DEFINITIONS[code].label}!`
+      );
     } else {
       const idx = handBonuses.lastIndexOf(code);
       if (idx === -1) return;
       onUpdateEntry(entry.$id, { handBonuses: handBonuses.filter((_, i) => i !== idx) });
+      setInlineBroadcastMsg('');
     }
   };
 
@@ -225,6 +239,16 @@ export const PlayerScoreDialog: React.FC<PlayerScoreDialogProps> = ({
               {breakdown.finalPoints.toLocaleString()} pts
             </div>
           </div>
+
+          {inlineBroadcastMsg && (
+            <div
+              role="status"
+              className="px-3.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-xs font-bold text-emerald-300 flex items-center gap-2"
+            >
+              <Check className="w-4 h-4 shrink-0 text-emerald-400" aria-hidden="true" />
+              <span>{inlineBroadcastMsg}</span>
+            </div>
+          )}
         </div>
 
         {/* Scrollable Full-Width Sections Body */}

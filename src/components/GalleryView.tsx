@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import type { Venue } from '../types/holdem';
+import { isAppwriteConfigured } from '@/lib/appwrite';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Images, MapPin, Calendar, X } from 'lucide-react';
@@ -70,13 +72,31 @@ const mockGalleryItems: GalleryItem[] = [
   },
 ];
 
-export const GalleryView: React.FC = () => {
+export interface GalleryViewProps {
+  venues?: Venue[];
+}
+
+export const GalleryView: React.FC<GalleryViewProps> = ({ venues = [] }) => {
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'champions' | 'events' | 'venues'>('all');
   const [activePhoto, setActivePhoto] = useState<GalleryItem | null>(null);
 
-  const filteredItems = selectedCategory === 'all' 
-    ? mockGalleryItems 
-    : mockGalleryItems.filter(item => item.category === selectedCategory);
+  const liveVenueItems: GalleryItem[] = venues
+    .filter((v) => Boolean(v.imageUrl))
+    .map((v) => ({
+      id: `venue_${v.$id}`,
+      title: v.name,
+      category: 'venues',
+      imageUrl: v.imageUrl || '',
+      date: 'Host Venue',
+      venueName: v.name,
+      description: v.address || 'Official tournament host location.',
+    }));
+
+  const gallerySource = isAppwriteConfigured ? liveVenueItems : mockGalleryItems;
+
+  const filteredItems = selectedCategory === 'all'
+    ? gallerySource
+    : gallerySource.filter((item) => item.category === selectedCategory);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12 animate-fadeIn">
@@ -90,7 +110,7 @@ export const GalleryView: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <Badge variant="secondary">TOURNAMENT MOMENTS</Badge>
-                <span className="text-xs text-slate-400 font-semibold">{mockGalleryItems.length} Photographs</span>
+                <span className="text-xs text-slate-400 font-semibold">{gallerySource.length} Photographs</span>
               </div>
               <h1 className="text-2xl font-black text-white mt-0.5">League Gallery &amp; Celebrations</h1>
             </div>
@@ -121,6 +141,15 @@ export const GalleryView: React.FC = () => {
       </div>
 
       {/* Grid of Moments */}
+      {filteredItems.length === 0 ? (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-10 text-center space-y-2">
+          <Images className="w-10 h-10 text-slate-600 mx-auto" />
+          <h3 className="text-base font-bold text-white">No Photos in This Category Yet</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto">
+            Upload venue photos in the Venues manager to showcase active league locations here.
+          </p>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredItems.map((item) => (
           <Card
@@ -159,6 +188,7 @@ export const GalleryView: React.FC = () => {
           </Card>
         ))}
       </div>
+      )}
 
       {/* Photo Detail Modal */}
       {activePhoto && (

@@ -16,7 +16,10 @@ import { EventScheduleModal } from './components/EventScheduleModal';
 import { AnnouncementManagerModal } from './components/AnnouncementManagerModal';
 import { InfoView } from './components/InfoView';
 import { GalleryView } from './components/GalleryView';
+import { LiveScoreNotificationOverlay } from './components/LiveScoreNotificationOverlay';
 import { Button } from './components/ui/button';
+import { useLiveScoreNotifications } from './hooks/useLiveScoreNotifications';
+import { isAppwriteConfigured } from './lib/appwrite';
 import { AppwriteService } from './services/appwriteService';
 import { AuthService } from './services/authService';
 import {
@@ -99,9 +102,60 @@ export const App: React.FC = () => {
 
   const currentView = route.view;
 
+  // Real-time score notifications, player highlights, and live entry synchronization
+  const {
+    toasts: scoreToasts,
+    recentFeed: liveScoreFeed,
+    tvBannerAlert,
+    highlightedPlayers,
+    soundEnabled: scoreSoundEnabled,
+    toggleSound: toggleScoreSound,
+    dismissToast: dismissScoreToast,
+    emitScoreEvent,
+    recordLocalEntriesSnapshot,
+  } = useLiveScoreNotifications({
+    games,
+    selectedGameId: selectedGame?.$id,
+    onRemoteEntryUpserted: (gameId, entry, allForGame) => {
+      const totalPlayersCount = allForGame.length;
+      const remainingPlayersCount = allForGame.filter(
+        (e) => !e.isEliminated && e.status !== 'ELIMINATED' && e.status !== 'MUCK'
+      ).length;
+      const totalEntriesCount = allForGame.reduce(
+        (sum, e) => sum + (e.buyinsCount || 1) + (e.rebuysCount || 0),
+        0
+      );
+
+      setGames((prev) =>
+        prev.map((g) =>
+          g.$id === gameId
+            ? { ...g, totalPlayersCount, remainingPlayersCount, totalEntriesCount }
+            : g
+        )
+      );
+
+      setSelectedGame((prev) => {
+        if (!prev || prev.$id !== gameId) return prev;
+        return { ...prev, totalPlayersCount, remainingPlayersCount, totalEntriesCount };
+      });
+
+      setGameEntries((prev) => {
+        const activeId = route.gameId || selectedGame?.$id;
+        if (activeId !== gameId) return prev;
+        const exists = prev.some((e) => e.$id === entry.$id);
+        return exists ? prev.map((e) => (e.$id === entry.$id ? entry : e)) : [...prev, entry];
+      });
+    },
+    onRemoteGameUpdated: (gameId, patch) => {
+      setGames((prev) => prev.map((g) => (g.$id === gameId ? { ...g, ...patch } : g)));
+      setSelectedGame((prev) => (prev && prev.$id === gameId ? { ...prev, ...patch } : prev));
+    },
+  });
+
   // Load entries for a game and reconcile live player counts
   const loadEntriesForGame = useCallback(async (game: Game) => {
     const entries = await AppwriteService.getGameEntries(game.$id);
+    recordLocalEntriesSnapshot(game.$id, entries);
     setGameEntries(entries);
     const totalPlayersCount = entries.length;
     const remainingPlayersCount = entries.filter(
@@ -119,7 +173,7 @@ export const App: React.FC = () => {
     };
     setSelectedGame(syncedGame);
     setGames((prev) => prev.map((g) => (g.$id === game.$id ? syncedGame : g)));
-  }, []);
+  }, [recordLocalEntriesSnapshot]);
 
   // Central route navigation helper (always reflects full hierarchical path in browser URL)
   const navigateTo = useCallback(
@@ -439,6 +493,7 @@ export const App: React.FC = () => {
     if (view === 'tv') {
       const targetGame = activeGameToDisplay;
       if (targetGame) {
+        void loadEntriesForGame(targetGame);
         const ids = resolveGameRouteIds(targetGame, seasons, venues, leagues);
         navigateTo({
           view: 'tv',
@@ -557,6 +612,9 @@ export const App: React.FC = () => {
       return entry;
     });
 
+    if (selectedGame) {
+      recordLocalEntriesSnapshot(selectedGame.$id, nextEntries);
+    }
     setGameEntries(nextEntries);
     if (selectedGame) {
       const nextRemaining = nextEntries.filter(
@@ -644,7 +702,7 @@ export const App: React.FC = () => {
   const activeSeasonName =
     urlSeason?.name ||
     (leagueSeasons.find((s) => s.isActive) || leagueSeasons[0] || seasons[0])?.name ||
-    '2026 Crawl 3';
+    'Active Season';
   const previousView = routeHistory[routeHistory.length - 1]?.view;
   const backLabel =
     previousView === 'admin'
@@ -662,7 +720,7 @@ export const App: React.FC = () => {
     players[0];
 
   // TV View Mode Renders Fullscreen Broadcast Component
-  if (currentView === 'tv' && activeGameToDisplay && hotHand && !isUnknownGame) {
+  if (currentView === 'tv' && activeGameToDisplay && !isUnknownGame) {
     return (
       <div className="relative">
         <button
@@ -674,8 +732,12 @@ export const App: React.FC = () => {
         <VenueTVDisplay
           key={activeGameToDisplay.$id}
           game={activeGameToDisplay}
+          entries={gameEntries}
           hotHand={hotHand}
           announcements={announcements}
+          tvBannerAlert={tvBannerAlert}
+          highlightedPlayers={highlightedPlayers}
+          recentFeed={liveScoreFeed}
         />
       </div>
     );
@@ -770,7 +832,7 @@ export const App: React.FC = () => {
                 onSelectSeason={handleSelectSeason}
                 seasonName={activeSeasonName}
                 announcements={announcements}
-                hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: '2/10 Boat', currentPool: 0, isClaimed: false }}
+                hotHand={hotHand}
                 onSelectGame={handleSelectGame}
                 isDirector={AuthService.canAccessDirector(currentUser?.role)}
                 onOpenScheduleModal={() => {
@@ -789,6 +851,7 @@ export const App: React.FC = () => {
                   setAnnouncementToEdit(null);
                   setIsAnnouncementModalOpen(true);
                 }}
+                recentFeed={liveScoreFeed}
               />
             )}
 
@@ -800,6 +863,7 @@ export const App: React.FC = () => {
                 selectedSeasonId={urlSeason?.$id}
                 onSelectSeason={(nextSeasonId) => handleSelectSeason(nextSeasonId)}
                 onSelectPlayer={handleSelectPlayer}
+                highlightedPlayers={highlightedPlayers}
               />
             )}
 
@@ -833,6 +897,9 @@ export const App: React.FC = () => {
                 onBack={handleGoBack}
                 backLabel={backLabel}
                 onSelectPlayer={handleSelectPlayer}
+                highlightedPlayers={highlightedPlayers}
+                onEmitScoreEvent={emitScoreEvent}
+                onRecordLocalEntriesSnapshot={recordLocalEntriesSnapshot}
               />
             )}
 
@@ -878,16 +945,25 @@ export const App: React.FC = () => {
             )}
 
             {currentView === 'gallery' && (
-              <GalleryView />
+              <GalleryView venues={leagueVenues.length > 0 ? leagueVenues : venues} />
             )}
           </>
         )}
       </main>
 
+      {/* Accessible Top-Layer Live Score Notification Pop-Up Region */}
+      <LiveScoreNotificationOverlay
+        toasts={scoreToasts}
+        soundEnabled={scoreSoundEnabled}
+        onToggleSound={toggleScoreSound}
+        onDismiss={dismissScoreToast}
+      />
+
       {/* Quick QR Check-in Modal */}
       <QRCheckinModal
         isOpen={isQROpen}
         onClose={() => setIsQROpen(false)}
+        venueName={activeGameToDisplay?.venueName}
       />
 
       {/* Appwrite Environment Setup & Reseed Modal */}
@@ -951,7 +1027,7 @@ export const App: React.FC = () => {
         currentUser={currentUser}
         onUserChange={(user) => {
           setCurrentUser(user);
-          if (user) {
+          if (user && (!isAppwriteConfigured || AuthService.isLiveAppwriteSession())) {
             setPlayers((prev) => {
               const exists = prev.some((p) => p.$id === user.$id);
               if (exists) {

@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import type { Game, GameEntry } from '@/types/holdem';
-import { calculateEntryScore, getEntryStatus } from '@/lib/scoring';
+import {
+  BAR_BONUS_CHIP_VALUE,
+  BAR_SPEND_PER_BONUS_CHIP_USD,
+  calculateEntryScore,
+  getEntryStatus,
+} from '@/lib/scoring';
 import { PaperScorecardGrid } from './PaperScorecardGrid';
 import { Button } from '@/components/ui/button';
 import { Printer, FileText } from 'lucide-react';
@@ -172,7 +177,7 @@ export const PaperScorecardView: React.FC<PaperScorecardViewProps> = ({
                   )}
                 </div>
 
-                {/* Col 3: Hot Hand & Purple */}
+                {/* Col 3: Hot Hand & Bar Spend ("Purple") */}
                 <div className="col-span-3 space-y-1.5 text-[11px]">
                   <div className="flex items-baseline gap-1">
                     <span className="font-bold whitespace-nowrap">HOT HAND:</span>
@@ -180,7 +185,10 @@ export const PaperScorecardView: React.FC<PaperScorecardViewProps> = ({
                       {game.hotHandDescription || '\u00A0'}
                     </span>
                   </div>
-                  <div className="flex items-baseline gap-1">
+                  <div
+                    className="flex items-baseline gap-1"
+                    title="Bar spend bonus chips ($15 bar spend = 1 chip / 15k tournament chips)"
+                  >
                     <span className="font-bold whitespace-nowrap">Purple:</span>
                     <span className="flex-1 border-b border-slate-900 px-1 font-mono font-bold">
                       {game.purpleCount !== undefined ? game.purpleCount : '\u00A0'}
@@ -347,6 +355,14 @@ export const PaperScorecardView: React.FC<PaperScorecardViewProps> = ({
                   <div className="flex justify-between">
                     <span>Total Rebuys:</span>
                     <strong className="font-mono">{totalRebuys}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Bar Chips (&ldquo;Purple&rdquo;):</span>
+                    <strong className="font-mono">
+                      {game.purpleCount ?? 0} ($
+                      {((game.purpleCount ?? 0) * BAR_SPEND_PER_BONUS_CHIP_USD).toLocaleString()} /{' '}
+                      {(((game.purpleCount ?? 0) * BAR_BONUS_CHIP_VALUE) / 1000).toFixed(0)}k)
+                    </strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Mucked Entries:</span>

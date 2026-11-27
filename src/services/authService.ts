@@ -1,4 +1,4 @@
-import { account, isAppwriteConfigured, ID, OAuthProvider } from '../lib/appwrite';
+import { account, isAppwriteConfigured, isPlatformAdminIdentity, ID, OAuthProvider } from '../lib/appwrite';
 import type { SuitIcon, UserProfile, UserRole } from '../types/holdem';
 import { AppwriteService } from './appwriteService';
 import { mockUsers } from './mockData';
@@ -196,23 +196,54 @@ export class AuthService {
   }
 
   /**
-   * Syncs a profile into both local user directory and the league players roster.
+   * Syncs a profile into the league players roster (and local user directory when offline).
    */
   private static async syncProfileDirectory(profile: UserProfile): Promise<void> {
-    try {
-      const allUsers = await this.getAllUsers();
-      const filtered = allUsers.filter(
-        (u) => u.$id !== profile.$id && u.email.toLowerCase() !== profile.email.toLowerCase()
-      );
-      localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify([profile, ...filtered]));
-    } catch {
-      // Ignore storage errors
+    if (!isAppwriteConfigured) {
+      try {
+        const allUsers = await this.getAllUsers();
+        const filtered = allUsers.filter(
+          (u) => u.$id !== profile.$id && u.email.toLowerCase() !== profile.email.toLowerCase()
+        );
+        localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify([profile, ...filtered]));
+      } catch {
+        // Ignore storage errors
+      }
     }
 
     try {
       await AppwriteService.upsertPlayerProfile(profile);
     } catch {
       // Ignore offline sync errors
+    }
+  }
+
+  private static async enrichFromLeaguePlayer(base: UserProfile): Promise<UserProfile> {
+    try {
+      const players = await AppwriteService.getPlayers();
+      const matched = players.find(
+        (p) =>
+          p.$id === base.$id ||
+          (base.email && p.email && p.email.toLowerCase() === base.email.toLowerCase())
+      );
+      if (!matched) {
+        return isPlatformAdminIdentity(base) ? { ...base, role: 'admin' } : base;
+      }
+      const enforcedAdmin = isPlatformAdminIdentity(base) || isPlatformAdminIdentity(matched);
+      return {
+        ...base,
+        role: enforcedAdmin ? 'admin' : matched.role || base.role,
+        nickname: matched.nickname || base.nickname,
+        suitIcon: matched.suitIcon || base.suitIcon,
+        isMember: matched.isMember ?? base.isMember,
+        totalPoints: matched.totalPoints ?? base.totalPoints,
+        careerWins: matched.careerWins ?? base.careerWins,
+        careerKOs: matched.careerKOs ?? base.careerKOs,
+        gamesPlayed: matched.gamesPlayed ?? base.gamesPlayed,
+        leagueId: matched.leagueId || base.leagueId,
+      };
+    } catch {
+      return base;
     }
   }
 
@@ -231,39 +262,50 @@ export class AuthService {
       window.history.replaceState(window.history.state, '', cleanUrl);
     }
 
-    if (isAppwriteConfigured && (hasActiveAppwriteSession() || isOAuthReturn)) {
-      try {
-        const user = await account.get();
-        const role = (user.prefs?.role as UserRole) || this.detectRoleFromEmail(user.email);
-        const nickname =
-          typeof user.prefs?.username === 'string' && user.prefs.username
-            ? user.prefs.username
-            : user.name || user.email.split('@')[0];
+    if (isAppwriteConfigured) {
+      if (!isExplicitlySignedOut() || isOAuthReturn) {
+        try {
+          const user = await account.get();
+          const prefRole = user.prefs?.role as UserRole | undefined;
+          const nickname =
+            typeof user.prefs?.username === 'string' && user.prefs.username
+              ? user.prefs.username
+              : user.name || user.email.split('@')[0];
 
-        const profile: UserProfile = {
-          $id: user.$id,
-          name: user.name || nickname,
-          nickname,
-          email: user.email,
-          role,
-          suitIcon: toSuitIcon(user.prefs?.suitIcon),
-          isMember: true,
-          totalPoints: Number(user.prefs?.totalPoints || 0),
-          careerWins: Number(user.prefs?.careerWins || 0),
-          careerKOs: Number(user.prefs?.careerKOs || 0),
-          gamesPlayed: Number(user.prefs?.gamesPlayed || 0),
-          leagueId: 'league_1',
-        };
-        setAppwriteSessionActive(true);
-        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
-        if (isOAuthReturn) {
-          await this.syncProfileDirectory(profile);
+          const rawProfile: UserProfile = {
+            $id: user.$id,
+            name: user.name || nickname,
+            nickname,
+            email: user.email,
+            role: isPlatformAdminIdentity({ name: user.name, nickname, email: user.email })
+              ? 'admin'
+              : prefRole || this.detectRoleFromEmail(user.email),
+            suitIcon: toSuitIcon(user.prefs?.suitIcon),
+            isMember: true,
+            totalPoints: Number(user.prefs?.totalPoints || 0),
+            careerWins: Number(user.prefs?.careerWins || 0),
+            careerKOs: Number(user.prefs?.careerKOs || 0),
+            gamesPlayed: Number(user.prefs?.gamesPlayed || 0),
+          };
+          const profile = await this.enrichFromLeaguePlayer(rawProfile);
+          setAppwriteSessionActive(true);
+          localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
+          if (profile.role === 'admin' && prefRole !== 'admin') {
+            try {
+              await account.updatePrefs({ ...user.prefs, role: 'admin' });
+            } catch {}
+            await this.syncProfileDirectory(profile);
+          } else if (isOAuthReturn) {
+            await this.syncProfileDirectory(profile);
+          }
+          return profile;
+        } catch {
+          setAppwriteSessionActive(false);
         }
-        return profile;
-      } catch {
-        // Appwrite session expired or guest scope — clear flag to prevent repeated 401 calls
-        setAppwriteSessionActive(false);
       }
+
+      // Do not auto-populate demo users ("Sarah Connor", etc.) when Appwrite is configured
+      return null;
     }
 
     // Respect explicit sign-out so guests remain signed out across reloads
@@ -271,7 +313,7 @@ export class AuthService {
       return null;
     }
 
-    // Fallback: Check local storage
+    // Offline demo fallback: Check local storage
     const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
     if (cached) {
       try {
@@ -281,7 +323,7 @@ export class AuthService {
       }
     }
 
-    // Default to manager for initial demo experience
+    // Default to manager for initial offline demo experience only
     return DEMO_USERS.manager;
   }
 
@@ -307,7 +349,13 @@ export class AuthService {
 
     const providedEmail = input.email?.trim().toLowerCase();
     const resolvedEmail = providedEmail || synthesizePlayerEmail(rawUsername);
-    const role: UserRole = 'player';
+    const role: UserRole = isPlatformAdminIdentity({
+      name: rawUsername,
+      nickname: rawUsername,
+      email: resolvedEmail,
+    })
+      ? 'admin'
+      : 'player';
 
     if (isAppwriteConfigured) {
       try {
@@ -422,13 +470,25 @@ export class AuthService {
         await account.createEmailPasswordSession(resolvedEmail, password);
         setAppwriteSessionActive(true);
         const user = await account.get();
-        const role = (user.prefs?.role as UserRole) || this.detectRoleFromEmail(user.email);
         const nickname =
           typeof user.prefs?.username === 'string' && user.prefs.username
             ? user.prefs.username
             : user.name || identifier.trim();
+        const isOwnerAdmin = isPlatformAdminIdentity({
+          name: user.name,
+          nickname,
+          email: user.email,
+        });
+        const role: UserRole = isOwnerAdmin
+          ? 'admin'
+          : (user.prefs?.role as UserRole) || this.detectRoleFromEmail(user.email);
+        if (isOwnerAdmin && user.prefs?.role !== 'admin') {
+          try {
+            await account.updatePrefs({ ...user.prefs, role: 'admin' });
+          } catch {}
+        }
 
-        const profile: UserProfile = {
+        const rawProfile: UserProfile = {
           $id: user.$id,
           name: user.name || nickname,
           nickname,
@@ -440,8 +500,8 @@ export class AuthService {
           careerWins: Number(user.prefs?.careerWins || 0),
           careerKOs: Number(user.prefs?.careerKOs || 0),
           gamesPlayed: Number(user.prefs?.gamesPlayed || 0),
-          leagueId: 'league_1',
         };
+        const profile = await this.enrichFromLeaguePlayer(rawProfile);
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(profile));
         await this.syncProfileDirectory(profile);
         return { user: profile };
@@ -518,9 +578,31 @@ export class AuthService {
   }
 
   /**
-   * Get all registered users and staff (sourced from Appwrite DB with local directory merge)
+   * Get all registered users and staff (strictly from Appwrite DB when configured)
    */
   static async getAllUsers(): Promise<UserProfile[]> {
+    const normalizeUser = (user: Partial<UserProfile> & { $id: string }): UserProfile => ({
+      $id: user.$id,
+      name: typeof user.name === 'string' && user.name.trim() ? user.name : user.nickname || 'Unnamed User',
+      nickname: typeof user.nickname === 'string' ? user.nickname : undefined,
+      email: typeof user.email === 'string' ? user.email : '',
+      role: user.role || 'player',
+      suitIcon: toSuitIcon(user.suitIcon),
+      isMember: user.isMember ?? true,
+      totalPoints: Number(user.totalPoints || 0),
+      careerWins: Number(user.careerWins || 0),
+      careerKOs: Number(user.careerKOs || 0),
+      gamesPlayed: Number(user.gamesPlayed || 0),
+      highHandBadges: Number(user.highHandBadges || 0),
+      hasDgCarryover: Boolean(user.hasDgCarryover),
+      leagueId: user.leagueId || (isAppwriteConfigured ? undefined : 'league_1'),
+    });
+
+    if (isAppwriteConfigured) {
+      const dbUsers = await AppwriteService.getPlayers();
+      return dbUsers.map((u) => normalizeUser(u));
+    }
+
     let dbUsers: UserProfile[] = [];
     try {
       dbUsers = await AppwriteService.getPlayers();
@@ -539,23 +621,6 @@ export class AuthService {
       }
     }
 
-    const normalizeUser = (user: Partial<UserProfile> & { $id: string }): UserProfile => ({
-      $id: user.$id,
-      name: typeof user.name === 'string' && user.name.trim() ? user.name : user.nickname || 'Unnamed User',
-      nickname: typeof user.nickname === 'string' ? user.nickname : undefined,
-      email: typeof user.email === 'string' ? user.email : '',
-      role: user.role || 'player',
-      suitIcon: toSuitIcon(user.suitIcon),
-      isMember: user.isMember ?? true,
-      totalPoints: Number(user.totalPoints || 0),
-      careerWins: Number(user.careerWins || 0),
-      careerKOs: Number(user.careerKOs || 0),
-      gamesPlayed: Number(user.gamesPlayed || 0),
-      highHandBadges: Number(user.highHandBadges || 0),
-      hasDgCarryover: Boolean(user.hasDgCarryover),
-      leagueId: user.leagueId || 'league_1',
-    });
-
     const base = dbUsers.length > 0 ? dbUsers : INITIAL_LEAGUE_USERS;
     const byId = new Map<string, UserProfile>();
     const seenEmails = new Set<string>();
@@ -572,7 +637,6 @@ export class AuthService {
       const localUser = normalizeUser(rawLocal);
       const existing = byId.get(localUser.$id);
       if (existing) {
-        // Keep local role override if user was updated locally
         byId.set(localUser.$id, { ...existing, role: localUser.role || existing.role });
       } else if (!localUser.email || !seenEmails.has(localUser.email.toLowerCase())) {
         byId.set(localUser.$id, localUser);
@@ -599,7 +663,9 @@ export class AuthService {
   ): Promise<UserProfile[]> {
     const users = await this.getAllUsers();
     const updated = users.map((u) => (u.$id === userId ? { ...u, role: newRole } : u));
-    localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+    if (!isAppwriteConfigured) {
+      localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+    }
 
     const targetUser = updated.find((u) => u.$id === userId);
     if (targetUser) {
@@ -630,9 +696,9 @@ export class AuthService {
    * Create or invite a new user with a specific role
    */
   static async createUser(name: string, email: string, role: UserRole): Promise<UserProfile> {
-    const users = await this.getAllUsers();
+    const newId = isAppwriteConfigured ? ID.unique() : `user_${Date.now()}`;
     const newUser: UserProfile = {
-      $id: `user_${Date.now()}`,
+      $id: newId,
       name,
       nickname: name,
       email,
@@ -643,21 +709,27 @@ export class AuthService {
       careerWins: 0,
       careerKOs: 0,
       gamesPlayed: 0,
-      leagueId: 'league_1',
+      leagueId: isAppwriteConfigured ? undefined : 'league_1',
     };
-    const updated = [newUser, ...users];
-    localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
-    await AppwriteService.upsertPlayerProfile(newUser);
-    return newUser;
+    if (!isAppwriteConfigured) {
+      const users = await this.getAllUsers();
+      const updated = [newUser, ...users];
+      localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+    }
+    const persisted = await AppwriteService.upsertPlayerProfile(newUser);
+    return persisted;
   }
 
   /**
    * Delete a user from the directory
    */
   static async deleteUser(userId: string): Promise<UserProfile[]> {
+    await AppwriteService.deletePlayer(userId);
     const users = await this.getAllUsers();
     const updated = users.filter((u) => u.$id !== userId);
-    localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+    if (!isAppwriteConfigured) {
+      localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+    }
     return updated;
   }
 

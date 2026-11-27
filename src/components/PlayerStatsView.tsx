@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Game, GameEntry, Player } from '../types/holdem';
+import { isAppwriteConfigured } from '@/lib/appwrite';
+import { AppwriteService } from '@/services/appwriteService';
 import { calculateEntryScore } from '@/lib/scoring';
 import { 
   ArrowLeft, 
@@ -24,40 +26,64 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
   onBack,
   backLabel = 'Back',
 }) => {
+  const [allPlayerEntries, setAllPlayerEntries] = useState<GameEntry[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    AppwriteService.getAllGameEntries()
+      .then((entries) => {
+        if (active) {
+          setAllPlayerEntries(entries.filter((e) => e.playerId === player.$id));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [player.$id]);
+
   const winRate = ((player.careerWins / (player.gamesPlayed || 1)) * 100).toFixed(1);
   const avgKOs = (player.careerKOs / (player.gamesPlayed || 1)).toFixed(1);
 
-  // Live / current session entries for this player
-  const livePlayerEntries = recentEntries
-    .filter((entry) => entry.playerId === player.$id)
-    .map((entry) => {
-      const game = games.find((g) => g.$id === entry.gameId) || {
-        title: 'Current Session',
-        venueName: 'League Venue',
-        scheduledAt: 'Current Session',
-        pointMultiplier: 1 as const,
-        isDayGame: false,
-        noGamePlayed: false,
-      };
-      const breakdown = calculateEntryScore(entry, game);
-      return {
-        date: `${game.title} (${game.scheduledAt})`,
-        venue: game.venueName,
-        multiplierLabel: breakdown.isMucked
-          ? 'MUCK (0x)'
-          : `${breakdown.totalMultiplier}x (${breakdown.sessionMultiplier}x${
-              breakdown.dgMultiplier === 2 ? ' × 2x DG' : ''
-            })`,
-        awards: breakdown.lineItems.map((item) => ({
-          label: item.code ? `[${item.code}] ${item.label}` : item.label,
-          basePoints: item.basePoints,
-          points: item.finalPoints,
-        })),
-        totalPoints: breakdown.finalPoints,
-      };
-    });
+  // Merge fetched entries with any in-memory session entries for this player
+  const mergedEntriesMap = new Map<string, GameEntry>();
+  for (const entry of allPlayerEntries) {
+    mergedEntriesMap.set(entry.$id, entry);
+  }
+  for (const entry of recentEntries) {
+    if (entry.playerId === player.$id) {
+      mergedEntriesMap.set(entry.$id, entry);
+    }
+  }
 
-  // Historical sample game breakdown aligned with Jack Ten Poker scoring formula
+  const livePlayerEntries = Array.from(mergedEntriesMap.values()).map((entry) => {
+    const game = games.find((g) => g.$id === entry.gameId) || {
+      title: 'Tournament Session',
+      venueName: 'League Venue',
+      scheduledAt: '',
+      pointMultiplier: 1 as const,
+      isDayGame: false,
+      noGamePlayed: false,
+    };
+    const breakdown = calculateEntryScore(entry, game);
+    return {
+      date: game.scheduledAt ? `${game.title} (${game.scheduledAt})` : game.title,
+      venue: game.venueName,
+      multiplierLabel: breakdown.isMucked
+        ? 'MUCK (0x)'
+        : `${breakdown.totalMultiplier}x (${breakdown.sessionMultiplier}x${
+            breakdown.dgMultiplier === 2 ? ' × 2x DG' : ''
+          })`,
+      awards: breakdown.lineItems.map((item) => ({
+        label: item.code ? `[${item.code}] ${item.label}` : item.label,
+        basePoints: item.basePoints,
+        points: item.finalPoints,
+      })),
+      totalPoints: breakdown.finalPoints,
+    };
+  });
+
+  // Historical sample game breakdown (offline demo mode only)
   const mockHistoryBreakdown = [
     {
       date: 'Saturday, August 22nd 2026, 2:30 pm',
@@ -94,7 +120,9 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
     },
   ];
 
-  const historyBreakdown = [...livePlayerEntries, ...mockHistoryBreakdown];
+  const historyBreakdown = isAppwriteConfigured
+    ? livePlayerEntries
+    : [...livePlayerEntries, ...mockHistoryBreakdown];
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12">
@@ -203,6 +231,15 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
           <Calendar className="w-5 h-5 text-amber-400" /> Recent Game Points History
         </h2>
 
+        {historyBreakdown.length === 0 ? (
+          <div className="bg-slate-900/60 rounded-xl p-8 border border-slate-800 text-center space-y-2">
+            <Calendar className="w-8 h-8 text-slate-600 mx-auto" />
+            <p className="text-sm font-semibold text-white">No Recorded Game Entries Yet</p>
+            <p className="text-xs text-slate-400">
+              Completed and active tournament entries for {player.name} will appear here automatically.
+            </p>
+          </div>
+        ) : (
         <div className="space-y-3">
           {historyBreakdown.map((item, idx) => (
             <div key={idx} className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 space-y-3">
@@ -237,6 +274,7 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
             </div>
           ))}
         </div>
+        )}
       </div>
 
     </div>

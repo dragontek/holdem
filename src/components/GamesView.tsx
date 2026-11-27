@@ -8,6 +8,7 @@ import type {
   HotHandJackpot,
   UserProfile,
 } from '../types/holdem';
+import type { LiveScoreNotification } from '@/lib/liveScoreEvents';
 import { AuthService } from '@/services/authService';
 import { AnnouncementBanner } from '@/components/AnnouncementBanner';
 import { Button } from '@/components/ui/button';
@@ -39,7 +40,7 @@ interface GamesViewProps {
   onSelectLeague?: (leagueId: string | null) => void;
   onSelectSeason?: (seasonId: string | null) => void;
   announcements: Announcement[];
-  hotHand: HotHandJackpot;
+  hotHand?: HotHandJackpot | null;
   onSelectGame: (game: Game) => void;
   isDirector?: boolean;
   onOpenScheduleModal?: () => void;
@@ -50,6 +51,7 @@ interface GamesViewProps {
   onNavigateInfo?: () => void;
   onEditAnnouncement?: (announcement: Announcement) => void;
   onCreateAnnouncement?: () => void;
+  recentFeed?: LiveScoreNotification[];
 }
 
 export const GamesView: React.FC<GamesViewProps> = ({
@@ -62,17 +64,18 @@ export const GamesView: React.FC<GamesViewProps> = ({
   onSelectLeague,
   onSelectSeason,
   announcements,
-  hotHand,
+  hotHand = null,
   onSelectGame,
   isDirector,
   onOpenScheduleModal,
   onOpenVenueModal,
-  seasonName = '2026 Crawl 3',
+  seasonName = 'Active Season',
   currentUser,
   onToggleRSVP,
   onNavigateInfo,
   onEditAnnouncement,
   onCreateAnnouncement,
+  recentFeed = [],
 }) => {
   const [selectedVenueId, setSelectedVenueId] = useState<string>('all');
 
@@ -242,44 +245,78 @@ export const GamesView: React.FC<GamesViewProps> = ({
         onNavigateInfo={onNavigateInfo}
       />
 
-      {/* 2. Daily Hot Hand Bonus Target Banner */}
-      <div className="glass-card rounded-2xl p-5 border border-amber-500/30 relative overflow-hidden">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-amber-500/20 rounded-xl border border-amber-500/40 text-amber-400">
-              <Flame className="w-7 h-7 text-amber-400" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs uppercase tracking-widest text-amber-400 font-extrabold flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" /> DAILY HOT HAND TARGET
-                </span>
-                <span className="text-xs text-slate-400">• {hotHand.date}</span>
-              </div>
-              <h2 className="text-xl font-black text-white">{hotHand.handTitle}</h2>
-            </div>
+      {/* Live Table Action Feed (Persistent History of Recent Score Awards) */}
+      {recentFeed.length > 0 && (
+        <div className="rounded-2xl border border-amber-500/30 bg-slate-900/70 p-4 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" aria-hidden="true" /> Live Table Score Feed
+            </span>
+            <span className="text-[11px] text-slate-400">Real-time scribe updates</span>
           </div>
-
-          <div className="flex items-center gap-4 bg-slate-900/90 px-4 py-2.5 rounded-xl border border-amber-500/30">
-            <div className="text-right">
-              <div className="text-[10px] uppercase text-slate-400 font-semibold">Hot Hand Bonus</div>
-              <div className="text-xl font-mono font-black text-amber-400">Session Target</div>
-            </div>
-            {onNavigateInfo && (
-              <>
-                <div className="w-px h-8 bg-slate-800" />
-                <button
-                  type="button"
-                  onClick={onNavigateInfo}
-                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all"
-                >
-                  Scoring Rules
-                </button>
-              </>
-            )}
+          <div className="space-y-1.5">
+            {recentFeed.slice(0, 4).map((ev) => (
+              <div
+                key={ev.id}
+                className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between gap-3 text-xs"
+              >
+                <div className="min-w-0">
+                  <span className="font-bold text-white">{ev.headline}</span>
+                  {ev.venueName && (
+                    <span className="text-slate-400 ml-2">• {ev.venueName}</span>
+                  )}
+                </div>
+                {ev.pointsAwarded > 0 && (
+                  <Badge variant="default" className="font-mono shrink-0">
+                    +{ev.pointsAwarded.toLocaleString()} pts
+                  </Badge>
+                )}
+              </div>
+            ))}
           </div>
         </div>
-      </div>
+      )}
+
+      {/* 2. Daily Hot Hand Bonus Target Banner */}
+      {hotHand && (
+        <div className="glass-card rounded-2xl p-5 border border-amber-500/30 relative overflow-hidden">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-amber-500/20 rounded-xl border border-amber-500/40 text-amber-400">
+                <Flame className="w-7 h-7 text-amber-400" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs uppercase tracking-widest text-amber-400 font-extrabold flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" /> DAILY HOT HAND TARGET
+                  </span>
+                  {hotHand.date && <span className="text-xs text-slate-400">• {hotHand.date}</span>}
+                </div>
+                <h2 className="text-xl font-black text-white">{hotHand.handTitle}</h2>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 bg-slate-900/90 px-4 py-2.5 rounded-xl border border-amber-500/30">
+              <div className="text-right">
+                <div className="text-[10px] uppercase text-slate-400 font-semibold">Hot Hand Bonus</div>
+                <div className="text-xl font-mono font-black text-amber-400">Session Target</div>
+              </div>
+              {onNavigateInfo && (
+                <>
+                  <div className="w-px h-8 bg-slate-800" />
+                  <button
+                    type="button"
+                    onClick={onNavigateInfo}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all"
+                  >
+                    Scoring Rules
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3. Venue Filter Sub-Bar */}
       <div className="flex items-center justify-between gap-4 overflow-x-auto pb-2 scrollbar-none">

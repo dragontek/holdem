@@ -1,27 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import type { Game, HotHandJackpot, Announcement } from '../types/holdem';
+import type { Game, GameEntry, HotHandJackpot, Announcement } from '../types/holdem';
+import type { LiveScoreNotification } from '@/lib/liveScoreEvents';
+import { BAR_BONUS_CHIP_VALUE } from '@/lib/scoring';
 import { AppwriteRealtime } from '../services/appwriteRealtime';
-import { 
-  Tv, 
-  Flame, 
-  Sparkles, 
-  Users, 
-  Coins, 
+import { TVBroadcastBanner, TVLiveStandingsPanel } from './tv/TVBroadcastBanner';
+import {
+  Sparkles,
   Megaphone,
   Maximize2,
-  Minimize2
+  Minimize2,
 } from 'lucide-react';
 
 interface VenueTVDisplayProps {
   game: Game;
-  hotHand: HotHandJackpot;
+  entries?: GameEntry[];
+  hotHand?: HotHandJackpot | null;
   announcements: Announcement[];
+  tvBannerAlert?: LiveScoreNotification | null;
+  highlightedPlayers?: ReadonlyMap<string, LiveScoreNotification>;
+  recentFeed?: LiveScoreNotification[];
 }
 
 export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
   game,
-  hotHand,
+  entries = [],
+  hotHand = null,
   announcements,
+  tvBannerAlert = null,
+  highlightedPlayers = new Map(),
+  recentFeed = [],
 }) => {
   const [secondsLeft, setSecondsLeft] = useState<number>(game.secondsRemainingInLevel);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -29,7 +36,9 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
   const currentLevel = game.blindSchedule[game.currentLevelIndex] || game.blindSchedule[0];
   const nextLevel = game.blindSchedule[game.currentLevelIndex + 1];
 
-  const totalChipsInPlay = game.totalEntriesCount * game.startingChips;
+  const totalChipsInPlay =
+    game.totalEntriesCount * game.startingChips +
+    (game.purpleCount ?? 0) * BAR_BONUS_CHIP_VALUE;
   const avgStack = game.remainingPlayersCount > 0 
     ? Math.round(totalChipsInPlay / game.remainingPlayersCount)
     : 0;
@@ -74,6 +83,8 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-between p-6 select-none relative overflow-hidden">
+      {/* Big-Screen Live Point & Knockout Broadcast Banner */}
+      <TVBroadcastBanner alert={tvBannerAlert} />
       
       {/* Background Felt Glow Effect */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[500px] bg-emerald-950/40 rounded-full blur-3xl pointer-events-none" />
@@ -108,14 +119,16 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="glass-card px-5 py-2.5 rounded-2xl border border-amber-500/40 text-right">
-            <div className="text-[10px] font-extrabold uppercase text-amber-400 tracking-wider">
-              HOT HAND TARGET
+          {(game.hotHandDescription || hotHand?.handTitle) && (
+            <div className="glass-card px-5 py-2.5 rounded-2xl border border-amber-500/40 text-right">
+              <div className="text-[10px] font-extrabold uppercase text-amber-400 tracking-wider">
+                HOT HAND TARGET
+              </div>
+              <div className="text-xl font-black text-amber-300">
+                {game.hotHandDescription || hotHand?.handTitle}
+              </div>
             </div>
-            <div className="text-xl font-black text-amber-300">
-              {game.hotHandDescription || hotHand.handTitle}
-            </div>
-          </div>
+          )}
 
           <button
             onClick={toggleFullscreen}
@@ -128,10 +141,9 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
       </header>
 
       {/* 2. Main TV Center Display */}
-      <main className="grid grid-cols-1 lg:grid-cols-3 gap-6 my-auto py-6 relative z-10">
-        
+      <main className="grid grid-cols-1 lg:grid-cols-12 gap-6 my-auto py-6 relative z-10">
         {/* Left Stats Column */}
-        <div className="glass-panel rounded-3xl p-6 border border-slate-800 flex flex-col justify-around space-y-4">
+        <div className="glass-panel rounded-3xl p-5 border border-slate-800 flex flex-col justify-around space-y-4 lg:col-span-3">
           <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 text-center">
             <div className="text-xs uppercase font-extrabold text-slate-400 tracking-widest">Players Remaining</div>
             <div className="text-5xl font-black text-amber-400 mt-1">
@@ -141,36 +153,35 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
 
           <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 text-center">
             <div className="text-xs uppercase font-extrabold text-slate-400 tracking-widest">Average Stack</div>
-            <div className="text-4xl font-black text-indigo-300 mt-1">
+            <div className="text-3xl font-black text-indigo-300 mt-1">
               {avgStack.toLocaleString()}
             </div>
           </div>
 
           <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 text-center">
             <div className="text-xs uppercase font-extrabold text-slate-400 tracking-widest">Total Chips in Play</div>
-            <div className="text-3xl font-black text-emerald-400 mt-1">
+            <div className="text-2xl font-black text-emerald-400 mt-1">
               {totalChipsInPlay.toLocaleString()}
             </div>
           </div>
         </div>
 
         {/* Center Clock Display */}
-        <div className="glass-panel rounded-3xl p-8 border border-emerald-500/40 felt-gradient felt-glow text-center flex flex-col items-center justify-center space-y-4 col-span-1 lg:col-span-2">
-          
+        <div className="glass-panel rounded-3xl p-8 border border-emerald-500/40 felt-gradient felt-glow text-center flex flex-col items-center justify-center space-y-4 lg:col-span-5">
           <span className="px-4 py-1.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-sm font-black uppercase tracking-widest flex items-center gap-2">
             <Sparkles className="w-4 h-4" /> LEVEL {currentLevel.level} {currentLevel.isBreak && '(BREAK)'}
           </span>
 
           {/* Huge Timer */}
-          <div className="text-8xl lg:text-[140px] font-mono font-black tracking-tight text-white drop-shadow-2xl leading-none">
+          <div className="text-7xl xl:text-[120px] font-mono font-black tracking-tight text-white drop-shadow-2xl leading-none">
             {formatTime(secondsLeft)}
           </div>
 
           {/* Current Blinds Banner */}
-          <div className="flex items-center gap-8 bg-slate-950/80 px-8 py-4 rounded-2xl border border-slate-800 shadow-2xl">
+          <div className="flex items-center gap-8 bg-slate-950/80 px-6 py-4 rounded-2xl border border-slate-800 shadow-2xl">
             <div>
               <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Blinds</div>
-              <div className="text-4xl font-black text-amber-400">
+              <div className="text-3xl xl:text-4xl font-black text-amber-400">
                 {currentLevel.smallBlind.toLocaleString()} / {currentLevel.bigBlind.toLocaleString()}
               </div>
             </div>
@@ -178,7 +189,7 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
             {currentLevel.ante > 0 && (
               <div className="border-l border-slate-800 pl-8">
                 <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Big Blind Ante</div>
-                <div className="text-4xl font-black text-indigo-300">
+                <div className="text-3xl xl:text-4xl font-black text-indigo-300">
                   {currentLevel.ante.toLocaleString()}
                 </div>
               </div>
@@ -195,9 +206,19 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
               )}
             </div>
           )}
-
         </div>
 
+        {/* Right Live Standings & Highlighted Player Board */}
+        <div className="lg:col-span-4 flex">
+          <div className="w-full">
+            <TVLiveStandingsPanel
+              game={game}
+              entries={entries}
+              highlightedPlayers={highlightedPlayers}
+              recentFeed={recentFeed}
+            />
+          </div>
+        </div>
       </main>
 
       {/* 3. Bottom Ticker & Chip Legend Bar */}

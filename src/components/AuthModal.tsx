@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { UserProfile, UserRole } from '@/types/holdem';
+import { isAppwriteConfigured } from '@/lib/appwrite';
 import { AuthService } from '@/services/authService';
 import { AccountProfilePanel } from '@/components/auth/AccountProfilePanel';
 import { OAuthProvidersBar } from '@/components/auth/OAuthProvidersBar';
@@ -331,41 +332,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {/* Future Google & Apple Sign-In (wired to Appwrite OAuth2) */}
             <OAuthProvidersBar onError={setErrorMsg} />
 
-            {/* Subtle Demo Role Testing Switcher */}
-            <details className="rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
-              <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wider text-slate-500 select-none">
-                Demo Staff Quick Access
-              </summary>
-              <div className="grid grid-cols-3 gap-2 pt-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDemoSwitch('admin')}
-                  className="h-9 text-xs"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> Admin
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDemoSwitch('manager')}
-                  className="h-9 text-xs"
-                >
-                  <Crown className="w-3.5 h-3.5 text-amber-400" /> Manager
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDemoSwitch('dealer')}
-                  className="h-9 text-xs"
-                >
-                  <Briefcase className="w-3.5 h-3.5 text-emerald-400" /> Dealer
-                </Button>
-              </div>
-            </details>
+            {/* Subtle Demo Role Testing Switcher (offline demo mode only) */}
+            {!isAppwriteConfigured && (
+              <details className="rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
+                <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wider text-slate-500 select-none">
+                  Demo Staff Quick Access
+                </summary>
+                <div className="grid grid-cols-3 gap-2 pt-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDemoSwitch('admin')}
+                    className="h-9 text-xs"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> Admin
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDemoSwitch('manager')}
+                    className="h-9 text-xs"
+                  >
+                    <Crown className="w-3.5 h-3.5 text-amber-400" /> Manager
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDemoSwitch('dealer')}
+                    className="h-9 text-xs"
+                  >
+                    <Briefcase className="w-3.5 h-3.5 text-emerald-400" /> Dealer
+                  </Button>
+                </div>
+              </details>
+            )}
           </div>
         )}
       </DialogContent>

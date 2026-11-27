@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { UserRole } from '@/types/holdem';
-import { isAppwriteConfigured } from '@/lib/appwrite';
+import { APPWRITE_ENDPOINT, isAppwriteConfigured, normalizeAppwriteEndpoint } from '@/lib/appwrite';
 import { AppwriteService } from '@/services/appwriteService';
 import {
   Dialog,
@@ -41,7 +41,7 @@ export const AppwriteSetupModal: React.FC<AppwriteSetupModalProps> = ({
   currentUserRole,
   onDataReseeded,
 }) => {
-  const [endpoint, setEndpoint] = useState<string>(import.meta.env.VITE_APPWRITE_ENDPOINT || '');
+  const [endpoint, setEndpoint] = useState<string>(APPWRITE_ENDPOINT || '');
   const [projectId, setProjectId] = useState<string>(import.meta.env.VITE_APPWRITE_PROJECT_ID || '');
   const [databaseId, setDatabaseId] = useState<string>(
     import.meta.env.VITE_APPWRITE_DATABASE_ID || 'holdem_db'
@@ -54,8 +54,9 @@ export const AppwriteSetupModal: React.FC<AppwriteSetupModalProps> = ({
   const [reseedResult, setReseedResult] = useState<string>('');
   const [reseedError, setReseedError] = useState<string>('');
 
+  const normalizedEndpoint = endpoint ? normalizeAppwriteEndpoint(endpoint) : 'https://appwrite.yourdomain.com/v1';
   const envTemplate = `# Jack Ten Poker Appwrite Environment Variables
-VITE_APPWRITE_ENDPOINT=${endpoint || 'https://appwrite.yourdomain.com/v1'}
+VITE_APPWRITE_ENDPOINT=${normalizedEndpoint}
 VITE_APPWRITE_PROJECT_ID=${projectId || '64a...'}
 VITE_APPWRITE_DATABASE_ID=${databaseId || 'holdem_db'}`;
 
@@ -278,7 +279,7 @@ VITE_APPWRITE_DATABASE_ID=${databaseId || 'holdem_db'}`;
           <div className="text-xs text-slate-400 flex items-center gap-1.5 mr-auto">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>
-              {isAppwriteConfigured ? 'Live Appwrite + offline cache' : 'Offline demo fallback active'}
+              {isAppwriteConfigured ? 'Live Appwrite (demo data disabled)' : 'Offline demo fallback active'}
             </span>
           </div>
           <Button type="button" onClick={onClose} disabled={isReseeding}>

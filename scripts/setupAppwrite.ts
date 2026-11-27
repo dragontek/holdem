@@ -31,7 +31,23 @@ if (fs.existsSync(envPath)) {
   });
 }
 
-const endpoint = process.env.VITE_APPWRITE_ENDPOINT || 'https://dragontek.io/v1';
+function normalizeEndpoint(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    if (!parsed.pathname || parsed.pathname === '/') {
+      return `${trimmed}/v1`;
+    }
+  } catch {
+    if (!/\/v\d+$/i.test(trimmed)) {
+      return `${trimmed}/v1`;
+    }
+  }
+  return trimmed;
+}
+
+const endpoint = normalizeEndpoint(process.env.VITE_APPWRITE_ENDPOINT || 'https://dragontek.io/v1');
 const projectId = process.env.VITE_APPWRITE_PROJECT_ID || '6ad3e9f6000495b2033d';
 const databaseId = process.env.VITE_APPWRITE_DATABASE_ID || 'holdem_db';
 const apiKey = process.env.APPWRITE_API_KEY || '';

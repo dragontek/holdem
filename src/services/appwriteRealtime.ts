@@ -1,9 +1,44 @@
 import { realtime, isAppwriteConfigured, DATABASE_ID, APPWRITE_TABLES } from '../lib/appwrite';
+import type { LiveScoreNotification } from '../lib/liveScoreEvents';
 
-type RealtimeCallback = (response: {
+export type RealtimeCallback = (response: {
   event: string;
   payload: Record<string, unknown>;
 }) => void;
+
+const BROADCAST_CHANNEL_NAME = 'holdem_live_score_events_v1';
+
+interface BroadcastPacket {
+  type: 'score_notification' | 'entry_updated' | 'game_updated';
+  notification?: LiveScoreNotification;
+  gameId?: string;
+  payload?: Record<string, unknown>;
+}
+
+function getBroadcastChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
+    return null;
+  }
+  try {
+    return new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+  } catch {
+    return null;
+  }
+}
+
+export function extractPayloadGameId(payload: Record<string, unknown>): string {
+  const rawGame = payload.game;
+  if (typeof rawGame === 'object' && rawGame !== null && '$id' in rawGame) {
+    return String((rawGame as { $id: unknown }).$id || '');
+  }
+  if (typeof rawGame === 'string' && rawGame) {
+    return rawGame;
+  }
+  if (typeof payload.gameId === 'string' && payload.gameId) {
+    return payload.gameId;
+  }
+  return '';
+}
 
 function subscribeChannels(
   channels: string[],
@@ -12,7 +47,7 @@ function subscribeChannels(
   if (!isAppwriteConfigured) return () => {};
 
   let isDisposed = false;
-  let subscription: { close: () => Promise<void> } | null = null;
+  let subscription: { unsubscribe: () => Promise<void> } | null = null;
 
   void realtime
     .subscribe(channels, (response) => {
@@ -21,7 +56,7 @@ function subscribeChannels(
     })
     .then((sub) => {
       if (isDisposed) {
-        void sub.close().catch(() => {});
+        void sub.unsubscribe().catch(() => {});
       } else {
         subscription = sub;
       }
@@ -35,7 +70,7 @@ function subscribeChannels(
     if (subscription) {
       const activeSub = subscription;
       subscription = null;
-      void activeSub.close().catch(() => {});
+      void activeSub.unsubscribe().catch(() => {});
     }
   };
 }
@@ -44,11 +79,11 @@ export class AppwriteRealtime {
   private static unsubscribeMap: Map<string, () => void> = new Map();
 
   /**
-   * Subscribe to real-time updates for active games (Clock ticks, status changes)
+   * Subscribe to real-time updates for a specific game (Clock ticks, status changes)
    */
   static subscribeToGameUpdates(gameId: string, callback: RealtimeCallback): () => void {
     const channels = [
-      `databases.${DATABASE_ID}.tables.${APPWRITE_TABLES.GAMES}.rows.${gameId}`,
+      `tablesdb.${DATABASE_ID}.tables.${APPWRITE_TABLES.GAMES}.rows.${gameId}`,
       `databases.${DATABASE_ID}.collections.${APPWRITE_TABLES.GAMES}.documents.${gameId}`,
     ];
 
@@ -69,18 +104,39 @@ export class AppwriteRealtime {
   }
 
   /**
-   * Subscribe to live game entry changes (Bust-outs, rebuys, table balancing)
+   * Subscribe to real-time updates across all games (status transitions, clock updates, rules)
+   */
+  static subscribeToAllGames(callback: RealtimeCallback): () => void {
+    const channels = [
+      `tablesdb.${DATABASE_ID}.tables.${APPWRITE_TABLES.GAMES}.rows`,
+      `databases.${DATABASE_ID}.collections.${APPWRITE_TABLES.GAMES}.documents`,
+    ];
+    return subscribeChannels(channels, (event, payload) => {
+      callback({ event, payload });
+    });
+  }
+
+  /**
+   * Subscribe to live game entry changes scoped to a specific gameId
    */
   static subscribeToGameEntries(gameId: string, callback: RealtimeCallback): () => void {
-    const channels = [
-      `databases.${DATABASE_ID}.tables.${APPWRITE_TABLES.GAME_ENTRIES}.rows`,
-      `databases.${DATABASE_ID}.collections.${APPWRITE_TABLES.GAME_ENTRIES}.documents`,
-    ];
-
-    return subscribeChannels(channels, (event, payload) => {
-      if (payload.game === gameId || payload.gameId === gameId) {
+    return this.subscribeToAllGameEntries(({ event, payload }) => {
+      if (extractPayloadGameId(payload) === gameId) {
         callback({ event, payload });
       }
+    });
+  }
+
+  /**
+   * Subscribe to all live game entry changes (point awards, knockouts, bust-outs, seating)
+   */
+  static subscribeToAllGameEntries(callback: RealtimeCallback): () => void {
+    const channels = [
+      `tablesdb.${DATABASE_ID}.tables.${APPWRITE_TABLES.GAME_ENTRIES}.rows`,
+      `databases.${DATABASE_ID}.collections.${APPWRITE_TABLES.GAME_ENTRIES}.documents`,
+    ];
+    return subscribeChannels(channels, (event, payload) => {
+      callback({ event, payload });
     });
   }
 
@@ -89,12 +145,58 @@ export class AppwriteRealtime {
    */
   static subscribeToJackpot(callback: RealtimeCallback): () => void {
     const channels = [
-      `databases.${DATABASE_ID}.tables.${APPWRITE_TABLES.HOT_HANDS}.rows`,
+      `tablesdb.${DATABASE_ID}.tables.${APPWRITE_TABLES.HOT_HANDS}.rows`,
       `databases.${DATABASE_ID}.collections.${APPWRITE_TABLES.HOT_HANDS}.documents`,
     ];
 
     return subscribeChannels(channels, (event, payload) => {
       callback({ event, payload });
     });
+  }
+
+  /**
+   * Broadcast a rich score notification immediately across open browser tabs (e.g. Scribe Desk -> TV tab)
+   */
+  static broadcastScoreNotification(notification: LiveScoreNotification): void {
+    const ch = getBroadcastChannel();
+    if (!ch) return;
+    const packet: BroadcastPacket = {
+      type: 'score_notification',
+      notification,
+    };
+    ch.postMessage(packet);
+    ch.close();
+  }
+
+  static broadcastEntrySnapshot(gameId: string, payload: Record<string, unknown>): void {
+    const ch = getBroadcastChannel();
+    if (!ch) return;
+    const packet: BroadcastPacket = {
+      type: 'entry_updated',
+      gameId,
+      payload,
+    };
+    ch.postMessage(packet);
+    ch.close();
+  }
+
+  static subscribeToLocalBroadcasts(handlers: {
+    onNotification?: (notification: LiveScoreNotification) => void;
+    onEntryUpdated?: (gameId: string, payload: Record<string, unknown>) => void;
+  }): () => void {
+    const ch = getBroadcastChannel();
+    if (!ch) return () => {};
+    ch.onmessage = (ev: MessageEvent<BroadcastPacket>) => {
+      const data = ev.data;
+      if (!data) return;
+      if (data.type === 'score_notification' && data.notification) {
+        handlers.onNotification?.(data.notification);
+      } else if (data.type === 'entry_updated' && data.gameId && data.payload) {
+        handlers.onEntryUpdated?.(data.gameId, data.payload);
+      }
+    };
+    return () => {
+      ch.close();
+    };
   }
 }

@@ -132,6 +132,11 @@ export interface Game {
   isDayGame?: boolean;
   noGamePlayed?: boolean;
   hodRule?: string;
+  /**
+   * Bar-spend bonus chip count (labeled "Purple" on the paper scorecard).
+   * Issued at 1 chip per $15 spent at the venue (worth 15k tournament chips; chip color varies by venue).
+   * Tracked per session for venue accounting and official scorecard turn-in.
+   */
   purpleCount?: number;
   buyinAmount: number;
   rebuyAmount: number;

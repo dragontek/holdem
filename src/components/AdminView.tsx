@@ -172,6 +172,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
     const targetUser = users.find((u) => u.$id === userId);
     if (!targetUser) return;
 
+    if (targetUser.role === 'admin' && newRole !== 'admin') {
+      const adminCount = users.filter((u) => u.role === 'admin').length;
+      if (adminCount <= 1) {
+        alert('Cannot demote the only Platform Admin.');
+        return;
+      }
+    }
+
     if (targetUser.role === 'manager' && newRole !== 'manager') {
       const managerCount = users.filter((u) => u.role === 'manager').length;
       if (managerCount <= 1) {

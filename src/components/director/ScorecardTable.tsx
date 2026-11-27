@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import type { Game, GameEntry, HandBonusCode, KnockoutCode } from '@/types/holdem';
+import type { LiveScoreNotification } from '@/lib/liveScoreEvents';
+import { QuickScoreStrip } from './QuickScoreStrip';
 import {
   auditKnockouts,
   calculateEntryScore,
@@ -27,8 +29,10 @@ export interface ScorecardTableProps {
   game: Game;
   entries: GameEntry[];
   canEdit: boolean;
+  highlightedPlayers?: ReadonlyMap<string, LiveScoreNotification>;
   onUpdateEntry: (entryId: string, updates: Partial<GameEntry>) => void;
   onRequestScorePlayer: (entryId: string) => void;
+  onRequestEliminate?: (entry: GameEntry) => void;
 }
 
 function summarizeCodes<T extends string>(codes: T[], order: readonly T[]): { code: T; count: number }[] {
@@ -45,8 +49,10 @@ export const ScorecardTable: React.FC<ScorecardTableProps> = ({
   game,
   entries,
   canEdit,
+  highlightedPlayers,
   onUpdateEntry,
   onRequestScorePlayer,
+  onRequestEliminate,
 }) => {
   const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
   const isLocked = !canEdit || game.status === 'completed';
@@ -61,6 +67,12 @@ export const ScorecardTable: React.FC<ScorecardTableProps> = ({
     if (isLocked) return;
     const next: KnockoutCode[] = [...getEntryKnockouts(entry), 'K'];
     onUpdateEntry(entry.$id, { knockouts: next, kosCount: next.length });
+  };
+
+  const handleQuickAwardBonus = (entry: GameEntry, code: HandBonusCode) => {
+    if (isLocked) return;
+    const next: HandBonusCode[] = [...getEntryHandBonuses(entry), code];
+    onUpdateEntry(entry.$id, { handBonuses: next });
   };
 
   const totalSessionPoints = sortedEntries.reduce(
@@ -151,12 +163,15 @@ export const ScorecardTable: React.FC<ScorecardTableProps> = ({
             );
             const isExpanded = expandedEntryId === entry.$id;
             const status = breakdown.status;
+            const highlight = highlightedPlayers?.get(entry.playerId);
 
             return (
               <div
                 key={entry.$id}
                 className={`rounded-xl border transition-colors ${
-                  status === 'MUCK'
+                  highlight
+                    ? 'bg-amber-500/10 border-amber-400 player-award-highlight'
+                    : status === 'MUCK'
                     ? 'bg-rose-950/20 border-rose-900/50'
                     : status === 'ELIMINATED'
                     ? 'bg-slate-950/60 border-slate-800/80'
@@ -164,6 +179,17 @@ export const ScorecardTable: React.FC<ScorecardTableProps> = ({
                 }`}
               >
                 <div className="p-4 space-y-3">
+                  {highlight && (
+                    <div className="px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/50 text-xs font-extrabold text-amber-200 flex items-center justify-between gap-2">
+                      <span>{highlight.headline}</span>
+                      {highlight.pointsAwarded > 0 && (
+                        <span className="font-mono text-amber-300 shrink-0">
+                          +{highlight.pointsAwarded.toLocaleString()} pts
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   {/* Top Row: Identity + Live Score */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1.5 min-w-0">
@@ -253,18 +279,27 @@ export const ScorecardTable: React.FC<ScorecardTableProps> = ({
                     </button>
                   </div>
 
-                  {/* Single Unified Player Actions Trigger (All Actions Inside Pop-up) */}
+                  {/* Scribe Quick-Record Strip + Full Actions Trigger */}
                   {!isLocked && (
-                    <div className="pt-2 border-t border-slate-800/70">
-                      <Button
-                        type="button"
-                        variant="default"
-                        onClick={() => onRequestScorePlayer(entry.$id)}
-                        className="w-full sm:w-auto h-11 text-sm font-bold sm:px-5"
-                      >
-                        <PlusCircle className="w-4 h-4" />
-                        Player Actions &amp; Points
-                      </Button>
+                    <div className="space-y-2.5">
+                      {status === 'ACTIVE' && onRequestEliminate && (
+                        <QuickScoreStrip
+                          entry={entry}
+                          onAwardHandBonus={handleQuickAwardBonus}
+                          onRequestBustOut={onRequestEliminate}
+                        />
+                      )}
+                      <div className="pt-1 flex items-center justify-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => onRequestScorePlayer(entry.$id)}
+                          className="w-full sm:w-auto h-10 text-xs font-bold sm:px-4"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5" />
+                          All Actions &amp; Adjustments
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>

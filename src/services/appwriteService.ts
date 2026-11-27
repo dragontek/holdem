@@ -3,6 +3,8 @@ import {
   tablesDb,
   storage,
   isAppwriteConfigured,
+  isPlatformAdminIdentity,
+  APPWRITE_ENDPOINT,
   DATABASE_ID,
   VENUE_IMAGES_BUCKET_ID,
   APPWRITE_TABLES,
@@ -10,17 +12,17 @@ import {
   ID,
   Query,
 } from '../lib/appwrite';
-import { 
-  mockLeague, 
+import {
+  mockLeague,
   mockLeagues,
-  mockSeasons, 
-  mockVenues, 
-  mockPlayers, 
+  mockSeasons,
+  mockVenues,
+  mockPlayers,
   mockEvents,
-  mockGames, 
-  mockGameEntries, 
-  mockAnnouncements, 
-  mockHotHandJackpot 
+  mockGames,
+  mockGameEntries,
+  mockAnnouncements,
+  mockHotHandJackpot
 } from './mockData';
 import type {
   League,
@@ -38,8 +40,14 @@ import type {
   GameEntryStatus,
   UserRole,
 } from '../types/holdem';
-import { calculateEntryScore, hasReachedShowUpCutoff, type FinalizedEntryResult } from '../lib/scoring';
+import {
+  OFFICIAL_BLIND_SCHEDULE,
+  calculateEntryScore,
+  hasReachedShowUpCutoff,
+  type FinalizedEntryResult,
+} from '../lib/scoring';
 
+const SESSION_CACHE_SCOPE = `${APPWRITE_ENDPOINT || 'offline'}__${DATABASE_ID}`;
 const LOCAL_STORAGE_LEAGUES_KEY = 'holdem_leagues';
 const LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY = 'holdem_league_overrides';
 const LOCAL_STORAGE_VENUE_OVERRIDES_KEY = 'holdem_venue_overrides';
@@ -50,9 +58,9 @@ const LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY = 'holdem_announcement_deleted';
 const LOCAL_STORAGE_GAME_OVERRIDES_KEY = 'holdem_game_overrides';
 const LOCAL_STORAGE_GAME_DELETED_KEY = 'holdem_game_deleted';
 const LOCAL_STORAGE_ENTRY_OVERRIDES_KEY = 'holdem_entry_overrides';
-const SESSION_UNSUPPORTED_COLS_KEY = 'holdem_appwrite_unsupported_cols';
-const SESSION_MISSING_TABLES_KEY = 'holdem_appwrite_missing_tables';
-const SESSION_PLAYERS_TABLE_KEY = 'holdem_appwrite_players_table';
+const SESSION_UNSUPPORTED_COLS_KEY = `holdem_appwrite_unsupported_cols__${SESSION_CACHE_SCOPE}`;
+const SESSION_MISSING_TABLES_KEY = `holdem_appwrite_missing_tables__${SESSION_CACHE_SCOPE}`;
+const SESSION_PLAYERS_TABLE_KEY = `holdem_appwrite_players_table__${SESSION_CACHE_SCOPE}`;
 
 /**
  * Live schema column cache discovered from Appwrite listRows/getRow responses.
@@ -140,7 +148,7 @@ function setResolvedPlayersTable(tableId: string | null): void {
 async function resilientListRows(tableId: string): Promise<any[] | null> {
   if (!isAppwriteConfigured || getMissingTables().has(tableId)) return null;
   try {
-    const response = await tablesDb.listRows(DATABASE_ID, tableId);
+    const response = await tablesDb.listRows(DATABASE_ID, tableId, [Query.limit(500)]);
     const items = (response as any).rows || (response as any).documents || [];
     recordTableColumns(tableId, items);
     return items;
@@ -151,16 +159,19 @@ async function resilientListRows(tableId: string): Promise<any[] | null> {
     }
     const code = getAppwriteErrorCode(tablesErr);
     if (code === 401 || code === 403 || code === 404) {
+      console.warn(`Appwrite listRows("${tableId}") returned HTTP ${code}:`, tablesErr);
       return null;
     }
     try {
-      const response = await databases.listDocuments(DATABASE_ID, tableId);
+      const response = await databases.listDocuments(DATABASE_ID, tableId, [Query.limit(500)]);
       const items = response.documents || [];
       recordTableColumns(tableId, items);
       return items;
     } catch (docErr: unknown) {
       if (isTableNotFoundError(docErr)) {
         markTableMissing(tableId);
+      } else {
+        console.warn(`Appwrite listDocuments("${tableId}") failed:`, docErr);
       }
       return null;
     }
@@ -264,6 +275,8 @@ function readOverrides<T>(storageKey: string): Record<string, Partial<T>> {
 }
 
 function saveOverride<T>(storageKey: string, id: string, updates: Partial<T>): void {
+  // Never write localStorage overrides when connected to Appwrite; Appwrite is the source of truth.
+  if (isAppwriteConfigured) return;
   try {
     const all = readOverrides<T>(storageKey);
     all[id] = { ...(all[id] || {}), ...updates };
@@ -413,15 +426,23 @@ function normalizeMultiplier(val: unknown): PointMultiplier {
 }
 
 export class AppwriteService {
-  // Fetch All Platform Leagues (with local overrides merged for unprovisioned columns)
-  static async getLeagues(): Promise<League[]> {
-    const leagueOverrides = readOverrides<League>(LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY);
-    const applyOverrides = (list: League[]): League[] =>
-      list.map((l) => (leagueOverrides[l.$id] ? { ...l, ...leagueOverrides[l.$id] } : l));
+  private static async resolveActiveLeagueId(preferredLeagueId?: string): Promise<string> {
+    if (!isAppwriteConfigured) {
+      return preferredLeagueId || mockLeague.$id;
+    }
+    if (preferredLeagueId && preferredLeagueId !== mockLeague.$id) {
+      return preferredLeagueId;
+    }
+    const leagues = await this.getLeagues();
+    return leagues[0]?.$id || '';
+  }
 
-    const items = await resilientListRows(APPWRITE_TABLES.LEAGUES);
-    if (items && items.length > 0) {
-      const mapped: League[] = items.map((doc: any) => ({
+  // Fetch All Platform Leagues (strictly Appwrite rows when Appwrite is configured)
+  static async getLeagues(): Promise<League[]> {
+    if (isAppwriteConfigured) {
+      const items = await resilientListRows(APPWRITE_TABLES.LEAGUES);
+      if (!items) return [];
+      return items.map((doc: any) => ({
         $id: doc.$id,
         name: doc.name || '',
         description: doc.description || '',
@@ -432,15 +453,18 @@ export class AppwriteService {
         managerEmail: doc.managerEmail || undefined,
         createdAt: doc.createdAt || doc.$createdAt || new Date().toISOString(),
       }));
-      return applyOverrides(mapped);
     }
+
+    const leagueOverrides = readOverrides<League>(LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY);
+    const applyOverrides = (list: League[]): League[] =>
+      list.map((l) => (leagueOverrides[l.$id] ? { ...l, ...leagueOverrides[l.$id] } : l));
 
     const cached = localStorage.getItem(LOCAL_STORAGE_LEAGUES_KEY);
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) return applyOverrides(parsed);
-      } catch {}
+      } catch { }
     }
 
     localStorage.setItem(LOCAL_STORAGE_LEAGUES_KEY, JSON.stringify(mockLeagues));
@@ -454,10 +478,20 @@ export class AppwriteService {
       const found = leagues.find((l) => l.$id === leagueId);
       if (found) return found;
     }
-    return leagues[0] || mockLeague;
+    if (leagues[0]) return leagues[0];
+    if (isAppwriteConfigured) {
+      return {
+        $id: '',
+        name: "Hold'em Pro",
+        description: '',
+        ownerId: '',
+        createdAt: new Date().toISOString(),
+      };
+    }
+    return mockLeague;
   }
 
-  // Create New League (persists to Appwrite via resilientCreateRow + local cache)
+  // Create New League
   static async createLeague(leagueData: Omit<League, '$id' | 'createdAt'>): Promise<League> {
     const newId = ID.unique();
     const createdAt = new Date().toISOString();
@@ -484,17 +518,17 @@ export class AppwriteService {
       createdAt,
     };
 
-    saveOverride<League>(LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY, createdId, newLeague);
-    const leagues = await this.getLeagues();
-    const updated = [newLeague, ...leagues.filter((l) => l.$id !== createdId)];
-    localStorage.setItem(LOCAL_STORAGE_LEAGUES_KEY, JSON.stringify(updated));
+    if (!isAppwriteConfigured) {
+      saveOverride<League>(LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY, createdId, newLeague);
+      const leagues = await this.getLeagues();
+      const updated = [newLeague, ...leagues.filter((l) => l.$id !== createdId)];
+      localStorage.setItem(LOCAL_STORAGE_LEAGUES_KEY, JSON.stringify(updated));
+    }
     return newLeague;
   }
 
-  // Update League Information & Manager Assignment (persists to Appwrite via resilientUpdateRow)
+  // Update League Information & Manager Assignment
   static async updateLeague(leagueId: string, updates: Partial<League>): Promise<boolean> {
-    saveOverride<League>(LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY, leagueId, updates);
-
     if (isAppwriteConfigured) {
       const payload: Record<string, unknown> = {};
       if (updates.name !== undefined) payload.name = updates.name;
@@ -505,9 +539,10 @@ export class AppwriteService {
       if (updates.managerName !== undefined) payload.managerName = updates.managerName || '';
       if (updates.managerEmail !== undefined) payload.managerEmail = updates.managerEmail || '';
 
-      await resilientUpdateRow(APPWRITE_TABLES.LEAGUES, leagueId, payload);
+      return resilientUpdateRow(APPWRITE_TABLES.LEAGUES, leagueId, payload);
     }
 
+    saveOverride<League>(LOCAL_STORAGE_LEAGUE_OVERRIDES_KEY, leagueId, updates);
     const leagues = await this.getLeagues();
     const updated = leagues.map((l) => (l.$id === leagueId ? { ...l, ...updates } : l));
     localStorage.setItem(LOCAL_STORAGE_LEAGUES_KEY, JSON.stringify(updated));
@@ -526,10 +561,12 @@ export class AppwriteService {
     });
   }
 
-  // Fetch Active & Historical Seasons (normalizes Appwrite league relationship -> leagueId)
+  // Fetch Active & Historical Seasons
   static async getSeasons(): Promise<Season[]> {
+    if (!isAppwriteConfigured) return mockSeasons;
+
     const items = await resilientListRows(APPWRITE_TABLES.SEASONS);
-    if (!items || items.length === 0) return mockSeasons;
+    if (!items) return [];
     return items.map((doc: any) => ({
       $id: doc.$id,
       leagueId:
@@ -543,8 +580,25 @@ export class AppwriteService {
     }));
   }
 
-  // Fetch Venues (merges Appwrite rows with official league venues & local overrides)
+  // Fetch Venues (strictly Appwrite rows when Appwrite is configured; demo fallback only when offline)
   static async getVenues(): Promise<Venue[]> {
+    if (isAppwriteConfigured) {
+      const items = await resilientListRows(APPWRITE_TABLES.VENUES);
+      if (!items) return [];
+      return items.map((doc: any) => ({
+        $id: doc.$id,
+        leagueId:
+          typeof doc.league === 'object' && doc.league
+            ? doc.league.$id
+            : doc.league || doc.leagueId || '',
+        name: doc.name || '',
+        address: doc.address || '',
+        phone: doc.phone || '',
+        website: doc.website || '',
+        imageUrl: doc.imageUrl || '',
+      }));
+    }
+
     const overrides = readOverrides<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY);
     let deletedIds = new Set<string>();
     try {
@@ -557,34 +611,9 @@ export class AppwriteService {
       // Ignore storage errors
     }
 
-    const items = await resilientListRows(APPWRITE_TABLES.VENUES);
-    const remoteVenues: Venue[] =
-      items && items.length > 0
-        ? items.map((doc: any) => ({
-            $id: doc.$id,
-            leagueId:
-              typeof doc.league === 'object' && doc.league
-                ? doc.league.$id
-                : doc.league || doc.leagueId || '',
-            name: doc.name || '',
-            address: doc.address || '',
-            phone: doc.phone || '',
-            website: doc.website || '',
-            imageUrl: doc.imageUrl || '',
-          }))
-        : [];
-
     const byId = new Map<string, Venue>();
     const seenNames = new Set<string>();
 
-    for (const v of remoteVenues) {
-      if (deletedIds.has(v.$id)) continue;
-      const merged = overrides[v.$id] ? { ...v, ...overrides[v.$id] } : v;
-      byId.set(merged.$id, merged);
-      seenNames.add(merged.name.trim().toLowerCase());
-    }
-
-    // Ensure all official scorecard venues are available even before setup:appwrite is re-run
     for (const seed of mockVenues) {
       if (deletedIds.has(seed.$id)) continue;
       if (byId.has(seed.$id) || seenNames.has(seed.name.trim().toLowerCase())) continue;
@@ -611,19 +640,26 @@ export class AppwriteService {
 
   // Fetch Events within Seasons
   static async getEvents(seasonId?: string): Promise<TournamentEvent[]> {
-    const items = await resilientListRows(APPWRITE_TABLES.EVENTS);
-    if (!items || items.length === 0) {
-      return seasonId && seasonId !== 'all' ? mockEvents.filter((e) => e.seasonId === seasonId) : mockEvents;
+    if (!isAppwriteConfigured) {
+      return seasonId && seasonId !== 'all'
+        ? mockEvents.filter((e) => e.seasonId === seasonId)
+        : mockEvents;
     }
+
+    const items = await resilientListRows(APPWRITE_TABLES.EVENTS);
+    if (!items) return [];
 
     const mapped: TournamentEvent[] = items.map((doc: any) => ({
       $id: doc.$id,
-      seasonId: typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || 'season_2026_crawl3',
-      venueId: typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || 'venue_single_barrel',
-      venueName: typeof doc.venue === 'object' && doc.venue?.name ? doc.venue.name : doc.venueName || 'Single Barrel',
-      title: doc.title,
+      seasonId:
+        typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || '',
+      venueId:
+        typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || '',
+      venueName:
+        typeof doc.venue === 'object' && doc.venue?.name ? doc.venue.name : doc.venueName || '',
+      title: doc.title || '',
       description: doc.description || '',
-      scheduledAt: doc.scheduledAt,
+      scheduledAt: doc.scheduledAt || '',
       status: doc.status || 'scheduled',
       isRecurring: Boolean(doc.isRecurring),
       recurrenceRule: doc.recurrenceRule,
@@ -705,17 +741,32 @@ export class AppwriteService {
   }
 
   // Normalize raw Appwrite rows (supports both 'users' and legacy 'players' tables with missing optional fields)
-  private static normalizePlayer(raw: Partial<Player> & { $id: string }): Player {
+  private static normalizePlayer(raw: Partial<Player> & { $id: string; league?: unknown }): Player {
     const validRoles: readonly Player['role'][] = ['admin', 'manager', 'dealer', 'scribe', 'player'];
     const validSuits: readonly Player['suitIcon'][] = ['hearts', 'diamonds', 'spades', 'clubs'];
-    const role: Player['role'] =
-      raw.role && validRoles.includes(raw.role) ? raw.role : 'player';
+    const isAdminOwner = isPlatformAdminIdentity({
+      name: typeof raw.name === 'string' ? raw.name : undefined,
+      nickname: typeof raw.nickname === 'string' ? raw.nickname : undefined,
+      email: typeof raw.email === 'string' ? raw.email : undefined,
+    });
+    const role: Player['role'] = isAdminOwner
+      ? 'admin'
+      : raw.role && validRoles.includes(raw.role)
+        ? raw.role
+        : 'player';
     const suitIcon: Player['suitIcon'] =
       raw.suitIcon && validSuits.includes(raw.suitIcon) ? raw.suitIcon : 'spades';
+    const rawLeague = raw.league;
+    const resolvedLeagueId =
+      typeof rawLeague === 'object' && rawLeague !== null && '$id' in rawLeague
+        ? String((rawLeague as { $id: unknown }).$id || '')
+        : typeof rawLeague === 'string' && rawLeague
+          ? rawLeague
+          : raw.leagueId || (isAppwriteConfigured ? '' : mockLeague.$id);
 
     return {
       $id: raw.$id,
-      leagueId: raw.leagueId || mockLeague.$id,
+      leagueId: resolvedLeagueId,
       name: typeof raw.name === 'string' && raw.name.trim() ? raw.name : raw.nickname || 'Unnamed Player',
       nickname: typeof raw.nickname === 'string' ? raw.nickname : undefined,
       email: typeof raw.email === 'string' ? raw.email : '',
@@ -732,13 +783,12 @@ export class AppwriteService {
     };
   }
 
-  // Fetch Players & Standings (supports both 'users' and legacy 'players' tables + local player profiles)
+  // Fetch Players & Standings (strictly Appwrite rows when Appwrite is configured)
   static async getPlayers(): Promise<Player[]> {
-    const playerOverrides = readOverrides<Player>(LOCAL_STORAGE_PLAYER_OVERRIDES_KEY);
-    const mergePlayers = (base: (Partial<Player> & { $id: string })[]): Player[] => {
+    if (!isAppwriteConfigured) {
+      const playerOverrides = readOverrides<Player>(LOCAL_STORAGE_PLAYER_OVERRIDES_KEY);
       const byId = new Map<string, Player>();
-      for (const raw of base) {
-        if (!raw || !raw.$id) continue;
+      for (const raw of mockPlayers) {
         const normalized = this.normalizePlayer(raw);
         const override = playerOverrides[raw.$id];
         byId.set(
@@ -752,11 +802,9 @@ export class AppwriteService {
         }
       }
       return Array.from(byId.values());
-    };
+    }
 
-    if (!isAppwriteConfigured) return mergePlayers(mockPlayers);
-
-    // If we already resolved which players table exists in this Appwrite DB, use it directly
+    // Resolve which players table exists in this Appwrite DB ('users' vs legacy 'players')
     const cachedTable = resolvedPlayersTableCache !== undefined ? resolvedPlayersTableCache : (() => {
       try {
         const stored = sessionStorage.getItem(SESSION_PLAYERS_TABLE_KEY);
@@ -767,24 +815,37 @@ export class AppwriteService {
       }
     })();
 
-    if (cachedTable === null) return mergePlayers(mockPlayers);
+    if (cachedTable === null) return [];
 
     const candidates = cachedTable ? [cachedTable] : ['users', 'players'];
     for (const tableId of candidates) {
       const items = await resilientListRows(tableId);
       if (items !== null) {
         setResolvedPlayersTable(tableId);
-        return mergePlayers(
-          items.length > 0 ? (items as unknown as (Partial<Player> & { $id: string })[]) : mockPlayers
+        const rows = (items as (Partial<Player> & { $id: string })[]).filter((raw) =>
+          Boolean(raw && raw.$id)
         );
+        for (const raw of rows) {
+          if (
+            raw.role !== 'admin' &&
+            isPlatformAdminIdentity({
+              name: typeof raw.name === 'string' ? raw.name : undefined,
+              nickname: typeof raw.nickname === 'string' ? raw.nickname : undefined,
+              email: typeof raw.email === 'string' ? raw.email : undefined,
+            })
+          ) {
+            void resilientUpdateRow(tableId, raw.$id, { role: 'admin' });
+          }
+        }
+        return rows.map((raw) => this.normalizePlayer(raw));
       }
     }
 
     setResolvedPlayersTable(null);
-    return mergePlayers(mockPlayers);
+    return [];
   }
 
-  // Sync a signed-up or signed-in player profile to Appwrite & local player roster
+  // Sync a signed-up or signed-in player profile to Appwrite (or local roster when offline)
   static async upsertPlayerProfile(profile: {
     $id: string;
     name: string;
@@ -797,13 +858,19 @@ export class AppwriteService {
     careerWins?: number;
     careerKOs?: number;
     gamesPlayed?: number;
+    leagueId?: string;
   }): Promise<Player> {
+    const resolvedLeagueId = await this.resolveActiveLeagueId(profile.leagueId);
+    const resolvedRole: Player['role'] = isPlatformAdminIdentity(profile)
+      ? 'admin'
+      : profile.role || 'player';
     const playerRecord: Player = {
       $id: profile.$id,
+      leagueId: resolvedLeagueId || undefined,
       name: profile.name,
       nickname: profile.nickname,
       email: profile.email || '',
-      role: profile.role || 'player',
+      role: resolvedRole,
       suitIcon: profile.suitIcon || 'spades',
       isMember: profile.isMember ?? true,
       totalPoints: profile.totalPoints ?? 0,
@@ -814,40 +881,61 @@ export class AppwriteService {
       hasDgCarryover: false,
     };
 
-    saveOverride<Player>(LOCAL_STORAGE_PLAYER_OVERRIDES_KEY, playerRecord.$id, playerRecord);
-    const existingIdx = mockPlayers.findIndex((p) => p.$id === playerRecord.$id);
-    if (existingIdx >= 0) {
-      mockPlayers[existingIdx] = { ...mockPlayers[existingIdx], ...playerRecord };
-    } else {
-      mockPlayers.push(playerRecord);
+    if (!isAppwriteConfigured) {
+      saveOverride<Player>(LOCAL_STORAGE_PLAYER_OVERRIDES_KEY, playerRecord.$id, playerRecord);
+      const existingIdx = mockPlayers.findIndex((p) => p.$id === playerRecord.$id);
+      if (existingIdx >= 0) {
+        mockPlayers[existingIdx] = { ...mockPlayers[existingIdx], ...playerRecord };
+      } else {
+        mockPlayers.push(playerRecord);
+      }
+      return playerRecord;
     }
 
-    if (isAppwriteConfigured) {
-      const playersTable = getResolvedPlayersTable();
-      if (playersTable && !getMissingTables().has(playersTable)) {
-        const payload: Record<string, unknown> = {
-          name: playerRecord.name,
-          email: playerRecord.email || '',
-          role: playerRecord.role || 'player',
-          nickname: playerRecord.nickname || playerRecord.name,
-          suitIcon: playerRecord.suitIcon,
-          isMember: playerRecord.isMember,
-          totalPoints: playerRecord.totalPoints,
-          careerWins: playerRecord.careerWins,
-          careerKOs: playerRecord.careerKOs,
-          gamesPlayed: playerRecord.gamesPlayed,
-          highHandBadges: playerRecord.highHandBadges || 0,
-          hasDgCarryover: false,
-          league: mockLeague.$id,
-        };
-        const updated = await resilientUpdateRow(playersTable, playerRecord.$id, payload);
-        if (!updated) {
-          await resilientCreateRow(playersTable, playerRecord.$id, payload);
-        }
+    const playersTable = getResolvedPlayersTable();
+    if (playersTable && !getMissingTables().has(playersTable)) {
+      const payload: Record<string, unknown> = {
+        name: playerRecord.name,
+        email: playerRecord.email || '',
+        role: playerRecord.role || 'player',
+        nickname: playerRecord.nickname || playerRecord.name,
+        suitIcon: playerRecord.suitIcon,
+        isMember: playerRecord.isMember,
+        totalPoints: playerRecord.totalPoints,
+        careerWins: playerRecord.careerWins,
+        careerKOs: playerRecord.careerKOs,
+        gamesPlayed: playerRecord.gamesPlayed,
+        highHandBadges: playerRecord.highHandBadges || 0,
+        hasDgCarryover: false,
+        ...(resolvedLeagueId ? { league: resolvedLeagueId } : {}),
+      };
+      const updated = await resilientUpdateRow(playersTable, playerRecord.$id, payload);
+      if (!updated) {
+        await resilientCreateRow(playersTable, playerRecord.$id, payload);
       }
     }
 
     return playerRecord;
+  }
+
+  static async deletePlayer(playerId: string): Promise<boolean> {
+    if (!isAppwriteConfigured) {
+      const idx = mockPlayers.findIndex((p) => p.$id === playerId);
+      if (idx !== -1) mockPlayers.splice(idx, 1);
+      return true;
+    }
+    const playersTable = getResolvedPlayersTable();
+    if (!playersTable || getMissingTables().has(playersTable)) return false;
+    try {
+      await tablesDb.deleteRow(DATABASE_ID, playersTable, playerId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  static mapRealtimeGameEntry(doc: Record<string, unknown>): GameEntry {
+    return this.mapRawGameEntry(doc);
   }
 
   private static mapRawGameEntry(doc: any): GameEntry {
@@ -859,8 +947,8 @@ export class AppwriteService {
       doc.status === 'ACTIVE' || doc.status === 'ELIMINATED' || doc.status === 'MUCK'
         ? doc.status
         : isEliminated
-        ? 'ELIMINATED'
-        : 'ACTIVE';
+          ? 'ELIMINATED'
+          : 'ACTIVE';
     const resolvedGameId =
       typeof doc.game === 'object' && doc.game
         ? doc.game.$id
@@ -898,133 +986,56 @@ export class AppwriteService {
   }
 
   static async getAllGameEntries(): Promise<GameEntry[]> {
-    const entryOverrides = readOverrides<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY);
-    const applyOverrides = (list: GameEntry[]): GameEntry[] => {
-      const byId = new Map<string, GameEntry>();
-      for (const e of list) {
-        byId.set(e.$id, entryOverrides[e.$id] ? { ...e, ...entryOverrides[e.$id] } : e);
-      }
-      for (const [id, override] of Object.entries(entryOverrides)) {
-        if (!byId.has(id) && override.gameId && override.playerName) {
-          byId.set(id, {
-            $id: id,
-            gameId: override.gameId,
-            playerId: override.playerId || '',
-            playerName: override.playerName,
-            playerSuitIcon: override.playerSuitIcon || 'spades',
-            tableNumber: override.tableNumber ?? 1,
-            seatNumber: override.seatNumber ?? 1,
-            buyinsCount: override.buyinsCount ?? 1,
-            rebuysCount: override.rebuysCount ?? 0,
-            addonsCount: override.addonsCount ?? 0,
-            status: override.status || (override.isEliminated ? 'ELIMINATED' : 'ACTIVE'),
-            showUpAwarded: override.showUpAwarded,
-            hasDgCarryover: Boolean(override.hasDgCarryover),
-            earnedDgForNextGame: Boolean(override.earnedDgForNextGame),
-            survivedRebuy: Boolean(override.survivedRebuy),
-            rebuyOnly: Boolean(override.rebuyOnly),
-            finishPosition: override.finishPosition,
-            pointsAwarded: override.pointsAwarded ?? 0,
-            kosCount: override.kosCount ?? 0,
-            knockouts: override.knockouts || [],
-            handBonuses: override.handBonuses || [],
-            eliminatedBySeat: override.eliminatedBySeat,
-            knockedOutByPlayerId: override.knockedOutByPlayerId,
-            knockedOutByPlayerName: override.knockedOutByPlayerName,
-            calculatedBasePoints: override.calculatedBasePoints,
-            calculatedFinalPoints: override.calculatedFinalPoints,
-            isEliminated: Boolean(override.isEliminated),
-          });
-        }
-      }
-      return Array.from(byId.values());
-    };
-
-    const items = await resilientListRows(APPWRITE_TABLES.GAME_ENTRIES);
-    if (!items || items.length === 0) {
-      return applyOverrides(mockGameEntries);
+    if (isAppwriteConfigured) {
+      const items = await resilientListRows(APPWRITE_TABLES.GAME_ENTRIES);
+      if (!items) return [];
+      return items.map((doc: any) => this.mapRawGameEntry(doc));
     }
-    return applyOverrides(items.map((doc: any) => this.mapRawGameEntry(doc)));
+
+    const entryOverrides = readOverrides<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY);
+    const byId = new Map<string, GameEntry>();
+    for (const e of mockGameEntries) {
+      byId.set(e.$id, entryOverrides[e.$id] ? { ...e, ...entryOverrides[e.$id] } : e);
+    }
+    for (const [id, override] of Object.entries(entryOverrides)) {
+      if (!byId.has(id) && override.gameId && override.playerName) {
+        byId.set(id, {
+          $id: id,
+          gameId: override.gameId,
+          playerId: override.playerId || '',
+          playerName: override.playerName,
+          playerSuitIcon: override.playerSuitIcon || 'spades',
+          tableNumber: override.tableNumber ?? 1,
+          seatNumber: override.seatNumber ?? 1,
+          buyinsCount: override.buyinsCount ?? 1,
+          rebuysCount: override.rebuysCount ?? 0,
+          addonsCount: override.addonsCount ?? 0,
+          status: override.status || (override.isEliminated ? 'ELIMINATED' : 'ACTIVE'),
+          showUpAwarded: override.showUpAwarded,
+          hasDgCarryover: Boolean(override.hasDgCarryover),
+          earnedDgForNextGame: Boolean(override.earnedDgForNextGame),
+          survivedRebuy: Boolean(override.survivedRebuy),
+          rebuyOnly: Boolean(override.rebuyOnly),
+          finishPosition: override.finishPosition,
+          pointsAwarded: override.pointsAwarded ?? 0,
+          kosCount: override.kosCount ?? 0,
+          knockouts: override.knockouts || [],
+          handBonuses: override.handBonuses || [],
+          eliminatedBySeat: override.eliminatedBySeat,
+          knockedOutByPlayerId: override.knockedOutByPlayerId,
+          knockedOutByPlayerName: override.knockedOutByPlayerName,
+          calculatedBasePoints: override.calculatedBasePoints,
+          calculatedFinalPoints: override.calculatedFinalPoints,
+          isEliminated: Boolean(override.isEliminated),
+        });
+      }
+    }
+    return Array.from(byId.values());
   }
 
   // Fetch Games with live entry counts derived directly from actual seated game_entries
   static async getGames(eventId?: string): Promise<Game[]> {
-    const gameOverrides = readOverrides<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY);
-    let deletedIds = new Set<string>();
-    try {
-      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_GAME_DELETED_KEY);
-      if (rawDeleted) {
-        const parsed = JSON.parse(rawDeleted);
-        if (Array.isArray(parsed)) deletedIds = new Set(parsed);
-      }
-    } catch {
-      // Ignore storage errors
-    }
-
-    const applyOverrides = (list: Game[]): Game[] => {
-      const byId = new Map<string, Game>();
-      for (const g of list) {
-        if (deletedIds.has(g.$id)) continue;
-        byId.set(g.$id, gameOverrides[g.$id] ? { ...g, ...gameOverrides[g.$id] } : g);
-      }
-      // Also preserve locally-created games if Appwrite createRow was unavailable or offline
-      for (const [id, override] of Object.entries(gameOverrides)) {
-        if (deletedIds.has(id) || byId.has(id) || !override.title) continue;
-        byId.set(id, {
-          $id: id,
-          eventId: override.eventId || '',
-          seasonId: override.seasonId || '',
-          venueId: override.venueId || '',
-          venueName: override.venueName || '',
-          title: override.title,
-          scheduledAt: override.scheduledAt || '',
-          status: override.status || 'scheduled',
-          dealerName: override.dealerName || '',
-          dealers: override.dealers || [],
-          scribes: override.scribes || [],
-          pointMultiplier: normalizeMultiplier(override.pointMultiplier),
-          isDayGame: Boolean(override.isDayGame),
-          noGamePlayed: Boolean(override.noGamePlayed),
-          hodRule: override.hodRule || '',
-          hotHandDescription: override.hotHandDescription || '',
-          purpleCount: Number(override.purpleCount || 0),
-          buyinAmount: Number(override.buyinAmount || 0),
-          rebuyAmount: Number(override.rebuyAmount || 0),
-          addonAmount: Number(override.addonAmount || 0),
-          startingChips: Number(override.startingChips || 15000),
-          hotHandJackpot: Number(override.hotHandJackpot || 0),
-          totalPlayersCount: Number(override.totalPlayersCount || 0),
-          remainingPlayersCount: Number(override.remainingPlayersCount || 0),
-          totalEntriesCount: Number(override.totalEntriesCount || 0),
-          currentLevelIndex: Number(override.currentLevelIndex || 0),
-          secondsRemainingInLevel: Number(override.secondsRemainingInLevel || 1200),
-          blindSchedule:
-            override.blindSchedule && override.blindSchedule.length > 0
-              ? override.blindSchedule
-              : mockGames[0].blindSchedule,
-          isRecurring: Boolean(override.isRecurring),
-          recurrenceRule: override.recurrenceRule,
-          seriesId: override.seriesId,
-          rsvpPlayerIds: override.rsvpPlayerIds || [],
-        });
-      }
-      return Array.from(byId.values());
-    };
-
-    const [items, allEntries] = await Promise.all([
-      resilientListRows(APPWRITE_TABLES.GAMES),
-      this.getAllGameEntries(),
-    ]);
-
-    const entriesByGameId = new Map<string, GameEntry[]>();
-    for (const entry of allEntries) {
-      if (!entry.gameId) continue;
-      const bucket = entriesByGameId.get(entry.gameId);
-      if (bucket) bucket.push(entry);
-      else entriesByGameId.set(entry.gameId, [entry]);
-    }
-
-    const reconcileCounts = (list: Game[]): Game[] =>
+    const reconcileCounts = (list: Game[], entriesByGameId: Map<string, GameEntry[]>): Game[] =>
       list.map((g) => {
         const gameEntries = entriesByGameId.get(g.$id) || [];
         const totalPlayersCount = gameEntries.length;
@@ -1043,49 +1054,137 @@ export class AppwriteService {
         };
       });
 
-    if (!items || items.length === 0) {
-      const merged = reconcileCounts(applyOverrides(mockGames));
-      if (eventId) return merged.filter((g) => g.eventId === eventId);
-      return merged;
+    if (isAppwriteConfigured) {
+      const [items, allEntries] = await Promise.all([
+        resilientListRows(APPWRITE_TABLES.GAMES),
+        this.getAllGameEntries(),
+      ]);
+      if (!items) return [];
+
+      const entriesByGameId = new Map<string, GameEntry[]>();
+      for (const entry of allEntries) {
+        if (!entry.gameId) continue;
+        const bucket = entriesByGameId.get(entry.gameId);
+        if (bucket) bucket.push(entry);
+        else entriesByGameId.set(entry.gameId, [entry]);
+      }
+
+      const mapped: Game[] = reconcileCounts(
+        items.map((doc: any) => ({
+          $id: doc.$id,
+          eventId:
+            typeof doc.event === 'object' && doc.event ? doc.event.$id : doc.event || doc.eventId || '',
+          seasonId:
+            typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || '',
+          venueId:
+            typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || '',
+          venueName:
+            typeof doc.venue === 'object' && doc.venue?.name ? doc.venue.name : doc.venueName || '',
+          title: doc.title || 'Untitled Game',
+          scheduledAt: doc.scheduledAt || '',
+          status: doc.status || 'scheduled',
+          dealerName: doc.dealerName || '',
+          dealers: parseJsonArray<string>(doc.dealers),
+          scribes: parseJsonArray<string>(doc.scribes),
+          pointMultiplier: normalizeMultiplier(doc.pointMultiplier),
+          isDayGame: Boolean(doc.isDayGame),
+          noGamePlayed: Boolean(doc.noGamePlayed),
+          hodRule: doc.hodRule || '',
+          purpleCount: Number(doc.purpleCount || 0),
+          buyinAmount: Number(doc.buyinAmount || 0),
+          rebuyAmount: Number(doc.rebuyAmount || 0),
+          addonAmount: Number(doc.addonAmount || 0),
+          startingChips: Number(doc.startingChips || 15000),
+          hotHandJackpot: Number(doc.hotHandJackpot || 0),
+          hotHandDescription: doc.hotHandDescription || '',
+          totalPlayersCount: doc.totalPlayersCount ?? 0,
+          remainingPlayersCount: doc.remainingPlayersCount ?? 0,
+          totalEntriesCount: doc.totalEntriesCount ?? 0,
+          currentLevelIndex: doc.currentLevelIndex || 0,
+          secondsRemainingInLevel: doc.secondsRemainingInLevel || 1200,
+          blindSchedule: OFFICIAL_BLIND_SCHEDULE,
+          isRecurring: Boolean(doc.isRecurring),
+          recurrenceRule: doc.recurrenceRule,
+          seriesId: doc.seriesId,
+          rsvpPlayerIds: parseJsonArray<string>(doc.rsvpPlayerIds),
+        })),
+        entriesByGameId
+      );
+
+      if (eventId) return mapped.filter((g) => g.eventId === eventId);
+      return mapped;
     }
 
-    const mapped: Game[] = reconcileCounts(applyOverrides(items.map((doc: any) => ({
-      $id: doc.$id,
-      eventId: typeof doc.event === 'object' && doc.event ? doc.event.$id : doc.event || doc.eventId || '',
-      seasonId: typeof doc.season === 'object' && doc.season ? doc.season.$id : doc.season || doc.seasonId || '',
-      venueId: typeof doc.venue === 'object' && doc.venue ? doc.venue.$id : doc.venue || doc.venueId || '',
-      venueName: (typeof doc.venue === 'object' && doc.venue?.name) ? doc.venue.name : doc.venueName || '',
-      title: doc.title || 'Untitled Game',
-      scheduledAt: doc.scheduledAt || '',
-      status: doc.status || 'scheduled',
-      dealerName: doc.dealerName || '',
-      dealers: parseJsonArray<string>(doc.dealers),
-      scribes: parseJsonArray<string>(doc.scribes),
-      pointMultiplier: normalizeMultiplier(doc.pointMultiplier),
-      isDayGame: Boolean(doc.isDayGame),
-      noGamePlayed: Boolean(doc.noGamePlayed),
-      hodRule: doc.hodRule || '',
-      purpleCount: Number(doc.purpleCount || 0),
-      buyinAmount: Number(doc.buyinAmount || 0),
-      rebuyAmount: Number(doc.rebuyAmount || 0),
-      addonAmount: Number(doc.addonAmount || 0),
-      startingChips: Number(doc.startingChips || 15000),
-      hotHandJackpot: Number(doc.hotHandJackpot || 0),
-      hotHandDescription: doc.hotHandDescription || '',
-      totalPlayersCount: doc.totalPlayersCount ?? 0,
-      remainingPlayersCount: doc.remainingPlayersCount ?? 0,
-      totalEntriesCount: doc.totalEntriesCount ?? 0,
-      currentLevelIndex: doc.currentLevelIndex || 0,
-      secondsRemainingInLevel: doc.secondsRemainingInLevel || 1200,
-      blindSchedule: mockGames[0].blindSchedule,
-      isRecurring: Boolean(doc.isRecurring),
-      recurrenceRule: doc.recurrenceRule,
-      seriesId: doc.seriesId,
-      rsvpPlayerIds: parseJsonArray<string>(doc.rsvpPlayerIds),
-    }))));
+    const gameOverrides = readOverrides<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY);
+    let deletedIds = new Set<string>();
+    try {
+      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_GAME_DELETED_KEY);
+      if (rawDeleted) {
+        const parsed = JSON.parse(rawDeleted);
+        if (Array.isArray(parsed)) deletedIds = new Set(parsed);
+      }
+    } catch {
+      // Ignore storage errors
+    }
 
-    if (eventId) return mapped.filter((g) => g.eventId === eventId);
-    return mapped;
+    const byId = new Map<string, Game>();
+    for (const g of mockGames) {
+      if (deletedIds.has(g.$id)) continue;
+      byId.set(g.$id, gameOverrides[g.$id] ? { ...g, ...gameOverrides[g.$id] } : g);
+    }
+    for (const [id, override] of Object.entries(gameOverrides)) {
+      if (deletedIds.has(id) || byId.has(id) || !override.title) continue;
+      byId.set(id, {
+        $id: id,
+        eventId: override.eventId || '',
+        seasonId: override.seasonId || '',
+        venueId: override.venueId || '',
+        venueName: override.venueName || '',
+        title: override.title,
+        scheduledAt: override.scheduledAt || '',
+        status: override.status || 'scheduled',
+        dealerName: override.dealerName || '',
+        dealers: override.dealers || [],
+        scribes: override.scribes || [],
+        pointMultiplier: normalizeMultiplier(override.pointMultiplier),
+        isDayGame: Boolean(override.isDayGame),
+        noGamePlayed: Boolean(override.noGamePlayed),
+        hodRule: override.hodRule || '',
+        hotHandDescription: override.hotHandDescription || '',
+        purpleCount: Number(override.purpleCount || 0),
+        buyinAmount: Number(override.buyinAmount || 0),
+        rebuyAmount: Number(override.rebuyAmount || 0),
+        addonAmount: Number(override.addonAmount || 0),
+        startingChips: Number(override.startingChips || 15000),
+        hotHandJackpot: Number(override.hotHandJackpot || 0),
+        totalPlayersCount: Number(override.totalPlayersCount || 0),
+        remainingPlayersCount: Number(override.remainingPlayersCount || 0),
+        totalEntriesCount: Number(override.totalEntriesCount || 0),
+        currentLevelIndex: Number(override.currentLevelIndex || 0),
+        secondsRemainingInLevel: Number(override.secondsRemainingInLevel || 1200),
+        blindSchedule:
+          override.blindSchedule && override.blindSchedule.length > 0
+            ? override.blindSchedule
+            : OFFICIAL_BLIND_SCHEDULE,
+        isRecurring: Boolean(override.isRecurring),
+        recurrenceRule: override.recurrenceRule,
+        seriesId: override.seriesId,
+        rsvpPlayerIds: override.rsvpPlayerIds || [],
+      });
+    }
+
+    const allEntries = await this.getAllGameEntries();
+    const entriesByGameId = new Map<string, GameEntry[]>();
+    for (const entry of allEntries) {
+      if (!entry.gameId) continue;
+      const bucket = entriesByGameId.get(entry.gameId);
+      if (bucket) bucket.push(entry);
+      else entriesByGameId.set(entry.gameId, [entry]);
+    }
+
+    const merged = reconcileCounts(Array.from(byId.values()), entriesByGameId);
+    if (eventId) return merged.filter((g) => g.eventId === eventId);
+    return merged;
   }
 
   // Toggle Player RSVP for a scheduled tournament
@@ -1109,20 +1208,18 @@ export class AppwriteService {
       await resilientUpdateRow(APPWRITE_TABLES.GAMES, gameId, {
         rsvpPlayerIds: JSON.stringify(updatedRsvps),
       });
+      return updatedGame;
     }
 
     saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, {
       rsvpPlayerIds: updatedRsvps,
     });
-
     const gIdx = mockGames.findIndex((g) => g.$id === gameId);
     if (gIdx !== -1) {
       mockGames[gIdx] = updatedGame;
     }
-
     return updatedGame;
   }
-
 
   // Fetch Game Entries strictly scoped to a specific Game ID
   static async getGameEntries(gameId: string): Promise<GameEntry[]> {
@@ -1130,8 +1227,23 @@ export class AppwriteService {
     return allEntries.filter((entry) => entry.gameId === gameId);
   }
 
-  // Fetch Announcements (merged with local overrides and deletions)
+  // Fetch Announcements (strictly Appwrite rows when Appwrite is configured)
   static async getAnnouncements(): Promise<Announcement[]> {
+    if (isAppwriteConfigured) {
+      const items = await resilientListRows(APPWRITE_TABLES.ANNOUNCEMENTS);
+      if (!items) return [];
+      return items
+        .map((doc: any) => ({
+          $id: doc.$id,
+          title: doc.title || '',
+          content: doc.content || '',
+          type: doc.type || 'info',
+          isActive: doc.isActive ?? true,
+          createdAt: doc.createdAt || doc.$createdAt || new Date().toISOString(),
+        }))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+
     const overrides = readOverrides<Announcement>(LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY);
     let deletedIds = new Set<string>();
     try {
@@ -1144,33 +1256,27 @@ export class AppwriteService {
       // Ignore storage errors
     }
 
-    const mergeList = (base: Announcement[]): Announcement[] => {
-      const byId = new Map<string, Announcement>();
-      for (const ann of base) {
-        if (deletedIds.has(ann.$id)) continue;
-        byId.set(ann.$id, overrides[ann.$id] ? { ...ann, ...overrides[ann.$id] } : ann);
+    const byId = new Map<string, Announcement>();
+    for (const ann of mockAnnouncements) {
+      if (deletedIds.has(ann.$id)) continue;
+      byId.set(ann.$id, overrides[ann.$id] ? { ...ann, ...overrides[ann.$id] } : ann);
+    }
+    for (const [id, override] of Object.entries(overrides)) {
+      if (deletedIds.has(id)) continue;
+      if (!byId.has(id) && override.title) {
+        byId.set(id, {
+          $id: id,
+          title: override.title,
+          content: override.content || '',
+          type: override.type || 'info',
+          isActive: override.isActive ?? true,
+          createdAt: override.createdAt || new Date().toISOString(),
+        });
       }
-      for (const [id, override] of Object.entries(overrides)) {
-        if (deletedIds.has(id)) continue;
-        if (!byId.has(id) && override.title) {
-          byId.set(id, {
-            $id: id,
-            title: override.title,
-            content: override.content || '',
-            type: override.type || 'info',
-            isActive: override.isActive ?? true,
-            createdAt: override.createdAt || new Date().toISOString(),
-          });
-        }
-      }
-      return Array.from(byId.values()).sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-    };
-
-    const items = await resilientListRows(APPWRITE_TABLES.ANNOUNCEMENTS);
-    const source = items && items.length > 0 ? (items as unknown as Announcement[]) : mockAnnouncements;
-    return mergeList(source);
+    }
+    return Array.from(byId.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   }
 
   static async createAnnouncement(
@@ -1200,8 +1306,11 @@ export class AppwriteService {
       isActive: data.isActive ?? true,
       createdAt,
     };
-    mockAnnouncements.unshift(created);
-    saveOverride<Announcement>(LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY, createdId, created);
+
+    if (!isAppwriteConfigured) {
+      mockAnnouncements.unshift(created);
+      saveOverride<Announcement>(LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY, createdId, created);
+    }
     return created;
   }
 
@@ -1209,56 +1318,63 @@ export class AppwriteService {
     announcementId: string,
     updates: Partial<Announcement>
   ): Promise<boolean> {
-    const idx = mockAnnouncements.findIndex((a) => a.$id === announcementId);
-    if (idx !== -1) {
-      mockAnnouncements[idx] = { ...mockAnnouncements[idx], ...updates };
+    if (!isAppwriteConfigured) {
+      const idx = mockAnnouncements.findIndex((a) => a.$id === announcementId);
+      if (idx !== -1) {
+        mockAnnouncements[idx] = { ...mockAnnouncements[idx], ...updates };
+      }
+      saveOverride<Announcement>(LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY, announcementId, updates);
+      return true;
     }
-    saveOverride<Announcement>(LOCAL_STORAGE_ANNOUNCEMENT_OVERRIDES_KEY, announcementId, updates);
 
-    if (!isAppwriteConfigured) return true;
     const payload: Record<string, unknown> = {};
     if (updates.title !== undefined) payload.title = updates.title;
     if (updates.content !== undefined) payload.content = updates.content;
     if (updates.type !== undefined) payload.type = updates.type;
     if (updates.isActive !== undefined) payload.isActive = updates.isActive;
 
-    await resilientUpdateRow(APPWRITE_TABLES.ANNOUNCEMENTS, announcementId, payload);
-    return true;
+    return resilientUpdateRow(APPWRITE_TABLES.ANNOUNCEMENTS, announcementId, payload);
   }
 
   static async deleteAnnouncement(announcementId: string): Promise<boolean> {
-    const idx = mockAnnouncements.findIndex((a) => a.$id === announcementId);
-    if (idx !== -1) {
-      mockAnnouncements.splice(idx, 1);
-    }
-    try {
-      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY);
-      const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
-      if (!parsed.includes(announcementId)) {
-        parsed.push(announcementId);
-        localStorage.setItem(LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY, JSON.stringify(parsed));
+    if (!isAppwriteConfigured) {
+      const idx = mockAnnouncements.findIndex((a) => a.$id === announcementId);
+      if (idx !== -1) {
+        mockAnnouncements.splice(idx, 1);
       }
-    } catch {
-      // Ignore storage errors
+      try {
+        const rawDeleted = localStorage.getItem(LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY);
+        const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+        if (!parsed.includes(announcementId)) {
+          parsed.push(announcementId);
+          localStorage.setItem(LOCAL_STORAGE_ANNOUNCEMENT_DELETED_KEY, JSON.stringify(parsed));
+        }
+      } catch {
+        // Ignore storage errors
+      }
+      return true;
     }
 
-    if (isAppwriteConfigured && !getMissingTables().has(APPWRITE_TABLES.ANNOUNCEMENTS)) {
+    if (!getMissingTables().has(APPWRITE_TABLES.ANNOUNCEMENTS)) {
       try {
         await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.ANNOUNCEMENTS, announcementId);
       } catch {
-        // Already deleted or local-only
+        return false;
       }
     }
     return true;
   }
 
-  // Fetch Current Hot Hand Target (lists rows so Appwrite-generated $id works)
-  static async getHotHandJackpot(): Promise<HotHandJackpot> {
+  // Fetch Current Hot Hand Target (null if none exists in Appwrite)
+  static async getHotHandJackpot(): Promise<HotHandJackpot | null> {
+    if (!isAppwriteConfigured) {
+      return mockHotHandJackpot;
+    }
     const items = await resilientListRows(APPWRITE_TABLES.HOT_HANDS);
     if (items && items.length > 0) {
       return items[0] as unknown as HotHandJackpot;
     }
-    return mockHotHandJackpot;
+    return null;
   }
 
   /**
@@ -1364,8 +1480,8 @@ export class AppwriteService {
     const playersTable = !getMissingTables().has(APPWRITE_TABLES.USERS)
       ? APPWRITE_TABLES.USERS
       : !getMissingTables().has('players')
-      ? 'players'
-      : null;
+        ? 'players'
+        : null;
     if (playersTable) {
       setResolvedPlayersTable(playersTable);
     }
@@ -1751,13 +1867,14 @@ export class AppwriteService {
 
   static async createVenue(venueData: Omit<Venue, '$id'>): Promise<Venue> {
     const newId = ID.unique();
+    const resolvedLeagueId = await this.resolveActiveLeagueId(venueData.leagueId);
     const payload: Record<string, unknown> = {
       name: venueData.name,
       address: venueData.address,
       phone: venueData.phone,
       website: venueData.website || '',
       imageUrl: venueData.imageUrl || '',
-      league: venueData.leagueId || mockLeague.$id,
+      ...(resolvedLeagueId ? { league: resolvedLeagueId } : {}),
     };
 
     let createdId = newId;
@@ -1768,25 +1885,29 @@ export class AppwriteService {
 
     const created: Venue = {
       $id: createdId,
-      leagueId: venueData.leagueId || mockLeague.$id,
+      leagueId: resolvedLeagueId,
       name: venueData.name,
       address: venueData.address,
       phone: venueData.phone,
       website: venueData.website || '',
       imageUrl: venueData.imageUrl || '',
     };
-    saveOverride<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY, createdId, created);
+    if (!isAppwriteConfigured) {
+      saveOverride<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY, createdId, created);
+    }
     return created;
   }
 
   static async updateVenue(venueId: string, updates: Partial<Venue>): Promise<boolean> {
-    saveOverride<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY, venueId, updates);
-    const idx = mockVenues.findIndex((v) => v.$id === venueId);
-    if (idx !== -1) {
-      mockVenues[idx] = { ...mockVenues[idx], ...updates };
+    if (!isAppwriteConfigured) {
+      saveOverride<Venue>(LOCAL_STORAGE_VENUE_OVERRIDES_KEY, venueId, updates);
+      const idx = mockVenues.findIndex((v) => v.$id === venueId);
+      if (idx !== -1) {
+        mockVenues[idx] = { ...mockVenues[idx], ...updates };
+      }
+      return true;
     }
 
-    if (!isAppwriteConfigured) return true;
     const payload: Record<string, unknown> = {};
     if (updates.name !== undefined) payload.name = updates.name;
     if (updates.address !== undefined) payload.address = updates.address;
@@ -1794,39 +1915,29 @@ export class AppwriteService {
     if (updates.website !== undefined) payload.website = updates.website;
     if (updates.imageUrl !== undefined) payload.imageUrl = updates.imageUrl;
 
-    const updated = await resilientUpdateRow(APPWRITE_TABLES.VENUES, venueId, payload);
-    if (!updated) {
-      const seed = mockVenues.find((v) => v.$id === venueId);
-      const createPayload: Record<string, unknown> = {
-        name: updates.name ?? seed?.name ?? '',
-        address: updates.address ?? seed?.address ?? '',
-        phone: updates.phone ?? seed?.phone ?? '',
-        website: updates.website ?? seed?.website ?? '',
-        imageUrl: updates.imageUrl ?? seed?.imageUrl ?? '',
-        league: updates.leagueId ?? seed?.leagueId ?? mockLeague.$id,
-      };
-      await resilientCreateRow(APPWRITE_TABLES.VENUES, venueId, createPayload);
-    }
-    return true;
+    return resilientUpdateRow(APPWRITE_TABLES.VENUES, venueId, payload);
   }
 
   static async deleteVenue(venueId: string): Promise<boolean> {
-    try {
-      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_VENUE_DELETED_KEY);
-      const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
-      if (!parsed.includes(venueId)) {
-        parsed.push(venueId);
-        localStorage.setItem(LOCAL_STORAGE_VENUE_DELETED_KEY, JSON.stringify(parsed));
+    if (!isAppwriteConfigured) {
+      try {
+        const rawDeleted = localStorage.getItem(LOCAL_STORAGE_VENUE_DELETED_KEY);
+        const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+        if (!parsed.includes(venueId)) {
+          parsed.push(venueId);
+          localStorage.setItem(LOCAL_STORAGE_VENUE_DELETED_KEY, JSON.stringify(parsed));
+        }
+      } catch {
+        // Ignore storage errors
       }
-    } catch {
-      // Ignore storage errors
+      return true;
     }
 
-    if (isAppwriteConfigured && !getMissingTables().has(APPWRITE_TABLES.VENUES)) {
+    if (!getMissingTables().has(APPWRITE_TABLES.VENUES)) {
       try {
         await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.VENUES, venueId);
       } catch {
-        // Already deleted or local-only
+        return false;
       }
     }
     return true;
@@ -1838,33 +1949,24 @@ export class AppwriteService {
 
   static async createSeason(seasonData: Omit<Season, '$id'>): Promise<Season> {
     const newId = ID.unique();
-    const payload = {
+    const resolvedLeagueId = await this.resolveActiveLeagueId(seasonData.leagueId);
+    const payload: Record<string, unknown> = {
       name: seasonData.name,
       startDate: seasonData.startDate,
       endDate: seasonData.endDate,
       isActive: Boolean(seasonData.isActive),
-      league: mockLeague.$id,
+      ...(resolvedLeagueId ? { league: resolvedLeagueId } : {}),
     };
 
+    let createdId = newId;
     if (isAppwriteConfigured) {
-      try {
-        const res = await tablesDb.createRow(DATABASE_ID, APPWRITE_TABLES.SEASONS, newId, payload);
-        return {
-          $id: res.$id || newId,
-          leagueId: mockLeague.$id,
-          name: seasonData.name,
-          startDate: seasonData.startDate,
-          endDate: seasonData.endDate,
-          isActive: Boolean(seasonData.isActive),
-        };
-      } catch (e) {
-        console.warn('Appwrite createSeason failed, returning local instance:', e);
-      }
+      const remoteId = await resilientCreateRow(APPWRITE_TABLES.SEASONS, newId, payload);
+      if (remoteId) createdId = remoteId;
     }
 
     return {
-      $id: newId,
-      leagueId: mockLeague.$id,
+      $id: createdId,
+      leagueId: resolvedLeagueId,
       name: seasonData.name,
       startDate: seasonData.startDate,
       endDate: seasonData.endDate,
@@ -1955,10 +2057,10 @@ export class AppwriteService {
       currentLevelIndex: gameData.currentLevelIndex || 0,
       secondsRemainingInLevel: gameData.secondsRemainingInLevel || 1200,
       rsvpPlayerIds: JSON.stringify(gameData.rsvpPlayerIds || []),
-      seasonId: gameData.seasonId || 'season_2026_crawl3',
+      seasonId: gameData.seasonId || '',
       venueId: gameData.venueId,
       venueName: gameData.venueName,
-      event: gameData.eventId,
+      ...(gameData.eventId ? { event: gameData.eventId } : {}),
     };
 
     let createdId = newId;
@@ -1972,23 +2074,25 @@ export class AppwriteService {
       $id: createdId,
       blindSchedule: gameData.blindSchedule?.length
         ? gameData.blindSchedule
-        : mockGames[0].blindSchedule,
+        : OFFICIAL_BLIND_SCHEDULE,
     };
 
-    mockGames.unshift(createdGame);
-    saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, createdId, createdGame);
+    if (!isAppwriteConfigured) {
+      mockGames.unshift(createdGame);
+      saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, createdId, createdGame);
+    }
     return createdGame;
   }
 
   static async updateGame(gameId: string, updates: Partial<Game>): Promise<boolean> {
-    // Always sync local offline cache & localStorage overrides so edits persist reliably
-    const localIdx = mockGames.findIndex((g) => g.$id === gameId);
-    if (localIdx !== -1) {
-      mockGames[localIdx] = { ...mockGames[localIdx], ...updates };
+    if (!isAppwriteConfigured) {
+      const localIdx = mockGames.findIndex((g) => g.$id === gameId);
+      if (localIdx !== -1) {
+        mockGames[localIdx] = { ...mockGames[localIdx], ...updates };
+      }
+      saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, updates);
+      return true;
     }
-    saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, updates);
-
-    if (!isAppwriteConfigured) return true;
 
     const payload: Record<string, unknown> = {};
     if (updates.title !== undefined) payload.title = updates.title;
@@ -2019,34 +2123,35 @@ export class AppwriteService {
     if (updates.seasonId !== undefined) payload.seasonId = updates.seasonId;
     if (updates.eventId !== undefined) payload.event = updates.eventId;
 
-    await resilientUpdateRow(APPWRITE_TABLES.GAMES, gameId, payload);
-    // Always succeed gracefully using local fallback if Appwrite rejects or is offline
-    return true;
+    return resilientUpdateRow(APPWRITE_TABLES.GAMES, gameId, payload);
   }
 
   static async deleteGame(gameId: string): Promise<boolean> {
-    try {
-      const rawDeleted = localStorage.getItem(LOCAL_STORAGE_GAME_DELETED_KEY);
-      const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
-      if (!parsed.includes(gameId)) {
-        parsed.push(gameId);
-        localStorage.setItem(LOCAL_STORAGE_GAME_DELETED_KEY, JSON.stringify(parsed));
+    if (!isAppwriteConfigured) {
+      try {
+        const rawDeleted = localStorage.getItem(LOCAL_STORAGE_GAME_DELETED_KEY);
+        const parsed: string[] = rawDeleted ? JSON.parse(rawDeleted) : [];
+        if (!parsed.includes(gameId)) {
+          parsed.push(gameId);
+          localStorage.setItem(LOCAL_STORAGE_GAME_DELETED_KEY, JSON.stringify(parsed));
+        }
+        const overrides = readOverrides<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY);
+        if (overrides[gameId]) {
+          delete overrides[gameId];
+          localStorage.setItem(LOCAL_STORAGE_GAME_OVERRIDES_KEY, JSON.stringify(overrides));
+        }
+      } catch {
+        // Ignore storage errors
       }
-      const overrides = readOverrides<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY);
-      if (overrides[gameId]) {
-        delete overrides[gameId];
-        localStorage.setItem(LOCAL_STORAGE_GAME_OVERRIDES_KEY, JSON.stringify(overrides));
-      }
-    } catch {
-      // Ignore storage errors
+      return true;
     }
-    if (!isAppwriteConfigured) return true;
+
     try {
       await tablesDb.deleteRow(DATABASE_ID, APPWRITE_TABLES.GAMES, gameId);
       return true;
     } catch (e) {
       console.error('Failed to delete game from Appwrite:', e);
-      return true;
+      return false;
     }
   }
 
@@ -2135,6 +2240,7 @@ export class AppwriteService {
         remainingPlayersCount: currentGame.remainingPlayersCount + 1,
         totalEntriesCount: currentGame.totalEntriesCount + 1,
       });
+      return newEntry;
     }
 
     mockGameEntries.push(newEntry);
@@ -2146,13 +2252,15 @@ export class AppwriteService {
     entryId: string,
     updates: Partial<GameEntry>
   ): Promise<boolean> {
-    const localIdx = mockGameEntries.findIndex((e) => e.$id === entryId);
-    if (localIdx !== -1) {
-      mockGameEntries[localIdx] = { ...mockGameEntries[localIdx], ...updates };
+    if (!isAppwriteConfigured) {
+      const localIdx = mockGameEntries.findIndex((e) => e.$id === entryId);
+      if (localIdx !== -1) {
+        mockGameEntries[localIdx] = { ...mockGameEntries[localIdx], ...updates };
+      }
+      saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, entryId, updates);
+      return true;
     }
-    saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, entryId, updates);
 
-    if (!isAppwriteConfigured) return true;
     const payload: Record<string, unknown> = {};
     if (updates.status !== undefined) payload.status = updates.status;
     if (updates.showUpAwarded !== undefined) payload.showUpAwarded = updates.showUpAwarded;
@@ -2235,43 +2343,44 @@ export class AppwriteService {
     const status: GameEntryStatus = options?.isMuck ? 'MUCK' : 'ELIMINATED';
     const koType = options?.koType === undefined ? 'K' : options.koType;
 
-    // Update local offline cache
-    const elimIdx = mockGameEntries.findIndex((e) => e.$id === eliminatedEntryId);
-    if (elimIdx !== -1) {
-      mockGameEntries[elimIdx] = {
-        ...mockGameEntries[elimIdx],
+    if (!isAppwriteConfigured) {
+      // Update local offline cache
+      const elimIdx = mockGameEntries.findIndex((e) => e.$id === eliminatedEntryId);
+      if (elimIdx !== -1) {
+        mockGameEntries[elimIdx] = {
+          ...mockGameEntries[elimIdx],
+          status,
+          isEliminated: true,
+          finishPosition,
+          eliminatedBySeat: options?.eliminatedBySeat,
+          knockedOutByPlayerId: koWinnerPlayerId || undefined,
+          knockedOutByPlayerName: options?.knockedOutByPlayerName,
+        };
+      }
+
+      if (koWinnerEntryId && koType) {
+        const killerIdx = mockGameEntries.findIndex((e) => e.$id === koWinnerEntryId);
+        if (killerIdx !== -1) {
+          const nextKOs: KnockoutCode[] = [...(mockGameEntries[killerIdx].knockouts || []), koType];
+          mockGameEntries[killerIdx] = {
+            ...mockGameEntries[killerIdx],
+            knockouts: nextKOs,
+            kosCount: nextKOs.length,
+          };
+        }
+      }
+
+      saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, eliminatedEntryId, {
         status,
         isEliminated: true,
         finishPosition,
         eliminatedBySeat: options?.eliminatedBySeat,
         knockedOutByPlayerId: koWinnerPlayerId || undefined,
         knockedOutByPlayerName: options?.knockedOutByPlayerName,
-      };
+      });
+      saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, { remainingPlayersCount });
+      return true;
     }
-
-    if (koWinnerEntryId && koType) {
-      const killerIdx = mockGameEntries.findIndex((e) => e.$id === koWinnerEntryId);
-      if (killerIdx !== -1) {
-        const nextKOs: KnockoutCode[] = [...(mockGameEntries[killerIdx].knockouts || []), koType];
-        mockGameEntries[killerIdx] = {
-          ...mockGameEntries[killerIdx],
-          knockouts: nextKOs,
-          kosCount: nextKOs.length,
-        };
-      }
-    }
-
-    saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, eliminatedEntryId, {
-      status,
-      isEliminated: true,
-      finishPosition,
-      eliminatedBySeat: options?.eliminatedBySeat,
-      knockedOutByPlayerId: koWinnerPlayerId || undefined,
-      knockedOutByPlayerName: options?.knockedOutByPlayerName,
-    });
-    saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, { remainingPlayersCount });
-
-    if (!isAppwriteConfigured) return true;
     try {
       // 1. Mark eliminated player (preserving elimination record even if MUCK)
       await resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, eliminatedEntryId, {
@@ -2302,7 +2411,7 @@ export class AppwriteService {
             kosCount: updatedKOs.length,
             knockouts: JSON.stringify(updatedKOs),
           });
-        } catch {}
+        } catch { }
       }
 
       if (koWinnerPlayerId && koType) {
@@ -2331,20 +2440,45 @@ export class AppwriteService {
     gameId: string,
     results: FinalizedEntryResult[]
   ): Promise<boolean> {
-    // Sync local offline mock caches
-    const gameIdx = mockGames.findIndex((g) => g.$id === gameId);
-    if (gameIdx !== -1) {
-      mockGames[gameIdx] = {
-        ...mockGames[gameIdx],
-        status: 'completed',
-        remainingPlayersCount: 0,
-      };
-    }
-    for (const res of results) {
-      const entryIdx = mockGameEntries.findIndex((e) => e.$id === res.entryId);
-      if (entryIdx !== -1) {
-        mockGameEntries[entryIdx] = {
-          ...mockGameEntries[entryIdx],
+    if (!isAppwriteConfigured) {
+      // Sync local offline mock caches
+      const gameIdx = mockGames.findIndex((g) => g.$id === gameId);
+      if (gameIdx !== -1) {
+        mockGames[gameIdx] = {
+          ...mockGames[gameIdx],
+          status: 'completed',
+          remainingPlayersCount: 0,
+        };
+      }
+      for (const res of results) {
+        const entryIdx = mockGameEntries.findIndex((e) => e.$id === res.entryId);
+        if (entryIdx !== -1) {
+          mockGameEntries[entryIdx] = {
+            ...mockGameEntries[entryIdx],
+            finishPosition: res.finishPosition,
+            status: res.status,
+            isEliminated: res.finishPosition > 1 || res.status === 'MUCK',
+            earnedDgForNextGame: res.earnedDgForNextGame,
+            calculatedBasePoints: res.basePoints,
+            calculatedFinalPoints: res.finalPoints,
+            pointsAwarded: res.finalPoints,
+            knockouts: res.knockouts,
+            kosCount: res.knockouts.length,
+            handBonuses: res.handBonuses,
+          };
+        }
+        const pIdx = mockPlayers.findIndex((p) => p.$id === res.playerId);
+        if (pIdx !== -1) {
+          mockPlayers[pIdx] = {
+            ...mockPlayers[pIdx],
+            totalPoints: mockPlayers[pIdx].totalPoints + res.finalPoints,
+            gamesPlayed: mockPlayers[pIdx].gamesPlayed + 1,
+            careerWins: mockPlayers[pIdx].careerWins + (res.finishPosition === 1 && res.status !== 'MUCK' ? 1 : 0),
+            highHandBadges: (mockPlayers[pIdx].highHandBadges || 0) + res.highHandCount,
+            hasDgCarryover: res.nextHasDgCarryover,
+          };
+        }
+        saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, res.entryId, {
           finishPosition: res.finishPosition,
           status: res.status,
           isEliminated: res.finishPosition > 1 || res.status === 'MUCK',
@@ -2355,41 +2489,15 @@ export class AppwriteService {
           knockouts: res.knockouts,
           kosCount: res.knockouts.length,
           handBonuses: res.handBonuses,
-        };
+        });
       }
-      const pIdx = mockPlayers.findIndex((p) => p.$id === res.playerId);
-      if (pIdx !== -1) {
-        mockPlayers[pIdx] = {
-          ...mockPlayers[pIdx],
-          totalPoints: mockPlayers[pIdx].totalPoints + res.finalPoints,
-          gamesPlayed: mockPlayers[pIdx].gamesPlayed + 1,
-          careerWins: mockPlayers[pIdx].careerWins + (res.finishPosition === 1 && res.status !== 'MUCK' ? 1 : 0),
-          highHandBadges: (mockPlayers[pIdx].highHandBadges || 0) + res.highHandCount,
-          hasDgCarryover: res.nextHasDgCarryover,
-        };
-      }
-    }
 
-    saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, {
-      status: 'completed',
-      remainingPlayersCount: 0,
-    });
-    for (const res of results) {
-      saveOverride<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY, res.entryId, {
-        finishPosition: res.finishPosition,
-        status: res.status,
-        isEliminated: res.finishPosition > 1 || res.status === 'MUCK',
-        earnedDgForNextGame: res.earnedDgForNextGame,
-        calculatedBasePoints: res.basePoints,
-        calculatedFinalPoints: res.finalPoints,
-        pointsAwarded: res.finalPoints,
-        knockouts: res.knockouts,
-        kosCount: res.knockouts.length,
-        handBonuses: res.handBonuses,
+      saveOverride<Game>(LOCAL_STORAGE_GAME_OVERRIDES_KEY, gameId, {
+        status: 'completed',
+        remainingPlayersCount: 0,
       });
+      return true;
     }
-
-    if (!isAppwriteConfigured) return true;
     try {
       // 1. Update Game to completed
       await resilientUpdateRow(APPWRITE_TABLES.GAMES, gameId, {
@@ -2437,7 +2545,7 @@ export class AppwriteService {
               }
             }
           }
-        } catch {}
+        } catch { }
       }
 
       return true;

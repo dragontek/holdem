@@ -99,6 +99,89 @@
   background: rgba(245, 158, 11, 0.8);
 }
 
+/* Visually hidden utility (accessible to screen readers, visible on focus) */
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+/* Top-Layer Manual Popover Toast Region */
+.score-toast-region[popover] {
+  position: fixed;
+  inset: auto 1rem 1rem auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  width: min(26rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  z-index: 60;
+}
+
+.score-toast-region[popover]:is(:popover-open, .\:popover-open) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+@supports not selector(:popover-open) {
+  .score-toast-region[data-has-items="true"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+  .score-toast-region[data-has-items="false"] {
+    display: none;
+  }
+}
+
+@keyframes scoreToastEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.score-toast-item {
+  animation: scoreToastEnter 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 180ms ease, transform 180ms ease;
+  transition-behavior: allow-discrete;
+}
+
+@keyframes scoreHighlightPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.7), 0 0 22px rgba(245, 158, 11, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.95), 0 0 30px rgba(245, 158, 11, 0.35);
+  }
+}
+
+.player-award-highlight {
+  animation: scoreHighlightPulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-toast-item,
+  .player-award-highlight {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 /* Print Rules for Physical Paper Scorecard Comparison Mode */
 @media print {
   body {

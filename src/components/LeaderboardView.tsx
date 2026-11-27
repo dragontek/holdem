@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { Player, Season, Venue } from '../types/holdem';
+import type { LiveScoreNotification } from '@/lib/liveScoreEvents';
 import { 
   Trophy, 
   Search, 
@@ -20,6 +21,7 @@ interface LeaderboardViewProps {
   selectedSeasonId?: string;
   onSelectSeason?: (seasonId: string) => void;
   onSelectPlayer: (player: Player) => void;
+  highlightedPlayers?: ReadonlyMap<string, LiveScoreNotification>;
 }
 
 export type SubTabMode = 'points' | 'ranking' | 'wins' | 'kos';
@@ -31,13 +33,14 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   selectedSeasonId: controlledSeasonId,
   onSelectSeason,
   onSelectPlayer,
+  highlightedPlayers,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<SubTabMode>('points');
   const [localSeasonId, setLocalSeasonId] = useState<string>(
     controlledSeasonId ||
       seasons.find((s) => s.isActive)?.$id ||
       seasons[0]?.$id ||
-      'season_2026_crawl3'
+      ''
   );
   const [selectedVenueId, setSelectedVenueId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -266,18 +269,32 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
       )}
 
       {/* 3. Full Standings Table */}
+      {sortedPlayers.length === 0 ? (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-10 text-center space-y-2">
+          <Trophy className="w-10 h-10 text-slate-600 mx-auto" />
+          <h3 className="text-base font-bold text-white">No Players Found</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto">
+            {searchQuery
+              ? `No players matched "${searchQuery}".`
+              : 'No player standings have been recorded yet for this league.'}
+          </p>
+        </div>
+      ) : (
       <div className="space-y-2">
         {sortedPlayers.map((player, index) => {
           const rank = index + 1;
           const suit = getSuitSymbol(player.suitIcon);
           const percentOfMax = (player.totalPoints / maxPoints) * 100;
+          const highlight = highlightedPlayers?.get(player.$id);
 
           return (
             <div
               key={player.$id}
               onClick={() => onSelectPlayer(player)}
               className={`glass-card rounded-xl p-3.5 border transition-all cursor-pointer hover:border-amber-500/50 hover:bg-slate-900/80 flex items-center justify-between gap-3 group relative overflow-hidden ${
-                rank === 1
+                highlight
+                  ? 'border-amber-400 bg-amber-500/10 player-award-highlight'
+                  : rank === 1
                   ? 'border-amber-500/40 bg-amber-500/5'
                   : rank <= 3
                   ? 'border-slate-700'
@@ -315,6 +332,11 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                   </div>
                   {player.nickname && (
                     <p className="text-xs text-slate-400">{player.nickname}</p>
+                  )}
+                  {highlight && (
+                    <p className="text-xs font-extrabold text-amber-300 mt-0.5">
+                      {highlight.headline}
+                    </p>
                   )}
                 </div>
               </div>
@@ -354,6 +376,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
           );
         })}
       </div>
+      )}
 
     </div>
   );

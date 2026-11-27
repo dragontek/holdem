@@ -12,6 +12,9 @@ import type {
 // Jack Ten Poker — Official Blind Schedule (In Thousands)
 // ==========================================
 
+export const BAR_SPEND_PER_BONUS_CHIP_USD = 15;
+export const BAR_BONUS_CHIP_VALUE = 15000;
+
 export const OFFICIAL_BLIND_SCHEDULE: BlindLevel[] = [
   // First Hour (20 min blinds): 1/2, 2/4, 4/8 + 10 min break
   { level: 1, smallBlind: 1000, bigBlind: 2000, ante: 0, durationMinutes: 20, isBreak: false },
@@ -38,7 +41,7 @@ export const OFFICIAL_BLIND_SCHEDULE: BlindLevel[] = [
     ante: 0,
     durationMinutes: 10,
     isBreak: true,
-    breakTitle: '10-Min Break (End of Hour 2 / Color Up)',
+    breakTitle: '10-Min Break (End of Hour 2)',
   },
   // Third Hour (10 min blinds): 50/100, 100/200, 200/400, 400/800
   { level: 10, smallBlind: 50000, bigBlind: 100000, ante: 0, durationMinutes: 10, isBreak: false },

@@ -23,10 +23,10 @@ Each tournament session tracks the following header metadata:
   * **Single Points:** `1x` base points
   * **Double Points:** `2x` base points
   * **Triple Points:** `3x` base points
-* **Dynamic Session Conditions:**
+* **Dynamic Session Conditions & Accounting:**
   * **HOD (Hand of the Day):** Specific hole card requirement announced for the game (e.g., `Connected`).
   * **Hot Hand:** Specific made hand target for the session (e.g., `2/10 Boat`).
-  * **Purple (Chip/Bounty/Color-up tracker):** Numeric value recorded per session (e.g., `3`).
+  * **Bar Spend Bonus Chips ("Purple" on scorecard):** Venue accounting counter for bonus chips earned by players for bar spend (`1` chip per `$15` spent at the bar, worth `15,000` tournament chips; physical chip color may vary by venue/set). Recorded on the official scorecard for venue accounting and turn-in.
 
 ---
 
@@ -120,7 +120,7 @@ All blind amounts below are expressed **in thousands** (e.g., `1/2` = `1,000 / 2
 | **Level 5** | `10 / 20` | `10,000 / 20,000` | **15 min** | Hour 2 |
 | **Level 6** | `20 / 40` | `20,000 / 40,000` | **15 min** | Hour 2 |
 | **Level 7** | `40 / 80` | `40,000 / 80,000` | **15 min** | Hour 2 |
-| **Break 2** | — | *Break* | **10 min** | End of Hour 2 • Color-up break |
+| **Break 2** | — | *Break* | **10 min** | End of Hour 2 |
 
 ### Third Hour — 10-Minute Blinds
 | Level | Blinds (in Thousands) | Small / Big Blind | Duration | Notes |

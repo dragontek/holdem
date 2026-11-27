@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { Game, GameEntry } from '@/types/holdem';
 import {
+  BAR_SPEND_PER_BONUS_CHIP_USD,
   computeFinalizationResults,
   formatOrdinal,
   getEntryStatus,
@@ -16,7 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Sun, Trophy, Ban, CheckCircle2 } from 'lucide-react';
+import { Sun, Trophy, Ban, CheckCircle2, Coins } from 'lucide-react';
 
 export interface FinalizeTournamentDialogProps {
   isOpen: boolean;
@@ -99,6 +100,10 @@ export const FinalizeTournamentDialog: React.FC<FinalizeTournamentDialogProps> =
               <Ban className="w-3 h-3" /> No-Game Show Up — Flat 5,000 pts (DG Preserved)
             </Badge>
           )}
+          <Badge variant="purple">
+            <Coins className="w-3 h-3" /> Bar Chips (&ldquo;Purple&rdquo;): {game.purpleCount ?? 0} ($
+            {((game.purpleCount ?? 0) * BAR_SPEND_PER_BONUS_CHIP_USD).toLocaleString()} Venue Spend)
+          </Badge>
         </div>
 
         {/* Remaining Active Placement Selector */}

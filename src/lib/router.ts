@@ -300,7 +300,7 @@ export function reconcileEntityRelationships(data: {
         ? g.venueId
         : parentEvent?.venueId && validVenueIds.has(parentEvent.venueId)
         ? parentEvent.venueId
-        : matchedVenueByName?.$id || venues[0]?.$id || g.venueId;
+        : matchedVenueByName?.$id || (!g.venueId && !g.venueName ? venues[0]?.$id || '' : g.venueId);
 
     const matchedVenue = venues.find((v) => v.$id === resolvedVenueId);
 
@@ -308,7 +308,7 @@ export function reconcileEntityRelationships(data: {
       ...g,
       seasonId: resolvedSeasonId,
       venueId: resolvedVenueId,
-      venueName: g.venueName || matchedVenue?.name || parentEvent?.venueName || 'Single Barrel',
+      venueName: matchedVenue?.name || g.venueName || parentEvent?.venueName || 'TBD Venue',
     };
   });
 

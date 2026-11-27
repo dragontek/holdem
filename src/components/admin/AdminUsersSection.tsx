@@ -10,6 +10,7 @@ export interface AdminUsersSectionProps {
   users: UserProfile[];
   filteredUsers: UserProfile[];
   currentUser?: UserProfile | null;
+  canAssignAdmin?: boolean;
   searchUserQuery: string;
   setSearchUserQuery: (val: string) => void;
   selectedRoleFilter: 'all' | UserRole;
@@ -23,6 +24,7 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
   users,
   filteredUsers,
   currentUser,
+  canAssignAdmin = false,
   searchUserQuery,
   setSearchUserQuery,
   selectedRoleFilter,
@@ -91,6 +93,7 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {filteredUsers.map((user) => {
           const isCurrentUser = currentUser?.$id === user.$id;
+          const isLockedAdminTarget = user.role === 'admin' && !canAssignAdmin;
           return (
             <Card
               key={user.$id}
@@ -116,10 +119,13 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
                 <div className="shrink-0">
                   <select
                     value={user.role}
+                    disabled={isLockedAdminTarget}
                     onChange={(e) => onChangeUserRole(user.$id, e.target.value as UserRole)}
-                    className="bg-slate-950 text-xs font-bold text-amber-400 border border-slate-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500"
+                    className="bg-slate-950 text-xs font-bold text-amber-400 border border-slate-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <option value="admin">🛡️ Admin</option>
+                    {(canAssignAdmin || user.role === 'admin') && (
+                      <option value="admin">🛡️ Admin</option>
+                    )}
                     <option value="manager">👑 Manager</option>
                     <option value="dealer">💼 Dealer</option>
                     <option value="scribe">✍️ Scribe</option>
@@ -137,7 +143,7 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
                   variant="ghost"
                   size="sm"
                   onClick={() => onDeleteUser(user.$id, user.name)}
-                  disabled={isCurrentUser}
+                  disabled={isCurrentUser || isLockedAdminTarget}
                   className="h-6 text-xs text-slate-500 hover:text-rose-400 p-0"
                 >
                   Remove User

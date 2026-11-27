@@ -34,12 +34,13 @@ export interface AdminDashboardOverviewProps {
   games: Game[];
   users: UserProfile[];
   announcements: Announcement[];
+  canManageLeagues?: boolean;
   onOpenSection: (section: DashboardSectionKey) => void;
   onCreateGame: () => void;
   onCreateSeason: () => void;
   onCreateVenue: () => void;
   onInviteUser: () => void;
-  onCreateLeague: () => void;
+  onCreateLeague?: () => void;
   onEditGame: (game: Game) => void;
   onSelectGame?: (game: Game) => void;
   onEditAnnouncement?: (announcement: Announcement) => void;
@@ -53,6 +54,7 @@ export const AdminDashboardOverview: React.FC<AdminDashboardOverviewProps> = ({
   games,
   users,
   announcements,
+  canManageLeagues = false,
   onOpenSection,
   onCreateGame,
   onCreateSeason,
@@ -86,8 +88,9 @@ export const AdminDashboardOverview: React.FC<AdminDashboardOverviewProps> = ({
       detail: leagues[0]?.name || 'League settings & assigned managers',
       icon: <Crown className="w-5 h-5 text-rose-400" />,
       accentClass: 'bg-rose-500/15 border-rose-500/30',
-      addLabel: 'New League',
-      onAdd: onCreateLeague,
+      ...(canManageLeagues && onCreateLeague
+        ? { addLabel: 'New League', onAdd: onCreateLeague }
+        : {}),
     },
     {
       key: 'seasons',

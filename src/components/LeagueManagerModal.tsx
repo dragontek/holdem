@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { League, UserProfile } from '@/types/holdem';
 import { AppwriteService } from '@/services/appwriteService';
 import { AuthService } from '@/services/authService';
+import { getActiveActorRole } from '@/lib/permissions';
 import { 
   Trophy, 
   Crown, 
@@ -79,6 +80,10 @@ export const LeagueManagerModal: React.FC<LeagueManagerModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (getActiveActorRole() !== 'admin') {
+      setErrorMsg('Only Platform Admins can create or configure leagues.');
+      return;
+    }
     if (!name.trim()) {
       setErrorMsg('League name is required');
       return;

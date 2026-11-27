@@ -19,7 +19,13 @@ import { GalleryView } from './components/GalleryView';
 import { LiveScoreNotificationOverlay } from './components/LiveScoreNotificationOverlay';
 import { Button } from './components/ui/button';
 import { useLiveScoreNotifications } from './hooks/useLiveScoreNotifications';
-import { isAppwriteConfigured } from './lib/appwrite';
+import {
+  APPWRITE_ENDPOINT,
+  APPWRITE_PROJECT_ID,
+  isAppwriteConfigured,
+} from './lib/appwrite';
+import { syncServerClockWithAppwrite } from './lib/gameClock';
+import { setActiveActor } from './lib/permissions';
 import { AppwriteService } from './services/appwriteService';
 import { AuthService } from './services/authService';
 import {
@@ -101,6 +107,10 @@ export const App: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
 
   const currentView = route.view;
+  const viewedGameId =
+    currentView === 'director' || currentView === 'tv'
+      ? route.gameId || selectedGame?.$id || null
+      : null;
 
   // Real-time score notifications, player highlights, and live entry synchronization
   const {
@@ -115,7 +125,7 @@ export const App: React.FC = () => {
     recordLocalEntriesSnapshot,
   } = useLiveScoreNotifications({
     games,
-    selectedGameId: selectedGame?.$id,
+    viewedGameId,
     onRemoteEntryUpserted: (gameId, entry, allForGame) => {
       const totalPlayersCount = allForGame.length;
       const remainingPlayersCount = allForGame.filter(
@@ -165,14 +175,18 @@ export const App: React.FC = () => {
       (sum, e) => sum + (e.buyinsCount || 1) + (e.rebuysCount || 0),
       0
     );
-    const syncedGame: Game = {
-      ...game,
-      totalPlayersCount,
-      remainingPlayersCount,
-      totalEntriesCount,
-    };
-    setSelectedGame(syncedGame);
-    setGames((prev) => prev.map((g) => (g.$id === game.$id ? syncedGame : g)));
+    setSelectedGame((prev) =>
+      prev && prev.$id === game.$id
+        ? { ...prev, totalPlayersCount, remainingPlayersCount, totalEntriesCount }
+        : { ...game, totalPlayersCount, remainingPlayersCount, totalEntriesCount }
+    );
+    setGames((prev) =>
+      prev.map((g) =>
+        g.$id === game.$id
+          ? { ...g, totalPlayersCount, remainingPlayersCount, totalEntriesCount }
+          : g
+      )
+    );
   }, [recordLocalEntriesSnapshot]);
 
   // Central route navigation helper (always reflects full hierarchical path in browser URL)
@@ -202,6 +216,9 @@ export const App: React.FC = () => {
 
   // Load initial data & resolve initial URL route
   useEffect(() => {
+    if (isAppwriteConfigured) {
+      void syncServerClockWithAppwrite(APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID);
+    }
     async function loadData() {
       try {
         const [rawGames, rawVenues, pList, rawSeasons, aList, hJackpot, user, rawEvents, rawLeagues] = await Promise.all([
@@ -316,6 +333,7 @@ export const App: React.FC = () => {
 
         if (activeG) {
           const entries = await AppwriteService.getGameEntries(activeG.$id);
+          recordLocalEntriesSnapshot(activeG.$id, entries);
           setGameEntries(entries);
         }
 
@@ -332,6 +350,41 @@ export const App: React.FC = () => {
     }
 
     loadData();
+  }, [recordLocalEntriesSnapshot]);
+
+  // Keep backend permission actor synchronized with active user & eject unauthorized Admin sessions
+  useEffect(() => {
+    setActiveActor(currentUser ? { $id: currentUser.$id, role: currentUser.role } : null);
+    if (!loading && currentView === 'admin' && !AuthService.canAccessAdmin(currentUser?.role)) {
+      const frame = requestAnimationFrame(() => {
+        navigateTo(
+          {
+            view: 'games',
+            seasonId: route.seasonId,
+          },
+          { replace: true }
+        );
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+    return undefined;
+  }, [currentUser, loading, currentView, route.seasonId, navigateTo]);
+
+  // Keep auth session synced across open browser tabs (login / logout in another tab)
+  useEffect(() => {
+    const handleStorageAuthSync = (e: StorageEvent) => {
+      if (
+        e.key === 'holdem_auth_user' ||
+        e.key === 'holdem_appwrite_session_active' ||
+        e.key === 'holdem_explicit_logout'
+      ) {
+        void AuthService.getCurrentUser().then((user) => {
+          setCurrentUser(user);
+        });
+      }
+    };
+    window.addEventListener('storage', handleStorageAuthSync);
+    return () => window.removeEventListener('storage', handleStorageAuthSync);
   }, []);
 
   // Sync with browser Back / Forward navigation
@@ -737,7 +790,7 @@ export const App: React.FC = () => {
           announcements={announcements}
           tvBannerAlert={tvBannerAlert}
           highlightedPlayers={highlightedPlayers}
-          recentFeed={liveScoreFeed}
+          recentFeed={liveScoreFeed.filter((item) => item.gameId === activeGameToDisplay.$id)}
         />
       </div>
     );
@@ -834,20 +887,27 @@ export const App: React.FC = () => {
                 announcements={announcements}
                 hotHand={hotHand}
                 onSelectGame={handleSelectGame}
-                isDirector={AuthService.canAccessDirector(currentUser?.role)}
+                canManageVenues={AuthService.canManageVenues(currentUser?.role)}
+                canScheduleGames={AuthService.canScheduleGames(currentUser?.role)}
                 onOpenScheduleModal={() => {
+                  if (!AuthService.canScheduleGames(currentUser?.role)) return;
                   setGameToEdit(null);
                   setIsScheduleModalOpen(true);
                 }}
-                onOpenVenueModal={() => setIsVenueModalOpen(true)}
+                onOpenVenueModal={() => {
+                  if (!AuthService.canManageVenues(currentUser?.role)) return;
+                  setIsVenueModalOpen(true);
+                }}
                 currentUser={currentUser}
                 onToggleRSVP={handleToggleRSVP}
                 onNavigateInfo={() => handleNavigate('info')}
                 onEditAnnouncement={(ann) => {
+                  if (!AuthService.canManageAnnouncements(currentUser?.role)) return;
                   setAnnouncementToEdit(ann);
                   setIsAnnouncementModalOpen(true);
                 }}
                 onCreateAnnouncement={() => {
+                  if (!AuthService.canManageAnnouncements(currentUser?.role)) return;
                   setAnnouncementToEdit(null);
                   setIsAnnouncementModalOpen(true);
                 }}
@@ -887,7 +947,7 @@ export const App: React.FC = () => {
                 venues={venues}
                 seasons={seasons}
                 allGames={scopedGames}
-                userRole={currentUser?.role || 'player'}
+                userRole={currentUser?.role ?? null}
                 onUpdateGame={handleUpdateGame}
                 onEliminatePlayer={handleEliminatePlayer}
                 onTournamentFinalized={handleTournamentFinalized}
@@ -903,7 +963,7 @@ export const App: React.FC = () => {
               />
             )}
 
-            {currentView === 'admin' && (
+            {currentView === 'admin' && AuthService.canAccessAdmin(currentUser?.role) && (
               <AdminView
                 games={games}
                 venues={venues}
@@ -920,15 +980,18 @@ export const App: React.FC = () => {
                 onEventsChange={setEvents}
                 onLeaguesChange={setLeagues}
                 onEditAnnouncement={(ann) => {
+                  if (!AuthService.canManageAnnouncements(currentUser?.role)) return;
                   setAnnouncementToEdit(ann);
                   setIsAnnouncementModalOpen(true);
                 }}
                 onCreateAnnouncement={() => {
+                  if (!AuthService.canManageAnnouncements(currentUser?.role)) return;
                   setAnnouncementToEdit(null);
                   setIsAnnouncementModalOpen(true);
                 }}
                 onRoleChange={(newRole: UserRole) => {
-                  AuthService.updateRole(newRole);
+                  if (isAppwriteConfigured) return;
+                  void AuthService.updateRole(newRole);
                   setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));
                 }}
                 onSelectGame={handleSelectGame}
@@ -1064,8 +1127,8 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* Dynamic Top Banner Announcement Modal */}
-      {isAnnouncementModalOpen && (
+      {/* Dynamic Top Banner Announcement Modal (Admin & Manager Only) */}
+      {isAnnouncementModalOpen && AuthService.canManageAnnouncements(currentUser?.role) && (
         <AnnouncementManagerModal
           key={announcementToEdit?.$id ?? 'new-announcement'}
           isOpen={isAnnouncementModalOpen}
@@ -1085,51 +1148,55 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Venues Manager Modal */}
-      <VenueManagerModal
-        isOpen={isVenueModalOpen}
-        onClose={() => setIsVenueModalOpen(false)}
-        venues={venues}
-        onVenuesChange={setVenues}
-      />
+      {/* Venues Manager Modal (Admin & Manager Only) */}
+      {AuthService.canManageVenues(currentUser?.role) && (
+        <VenueManagerModal
+          isOpen={isVenueModalOpen}
+          onClose={() => setIsVenueModalOpen(false)}
+          venues={venues}
+          onVenuesChange={setVenues}
+        />
+      )}
 
-      {/* Event Schedule Modal */}
-      <EventScheduleModal
-        isOpen={isScheduleModalOpen}
-        onClose={() => {
-          setIsScheduleModalOpen(false);
-          setGameToEdit(null);
-        }}
-        gameToEdit={gameToEdit}
-        venues={leagueVenues.length > 0 ? leagueVenues : venues}
-        seasons={leagueSeasons.length > 0 ? leagueSeasons : seasons}
-        players={players}
-        defaultSeasonId={urlSeason?.$id}
-        onGameSaved={(savedGame) => {
-          if (gameToEdit) {
-            setGames((prev) => prev.map((g) => (g.$id === savedGame.$id ? savedGame : g)));
-            if (selectedGame?.$id === savedGame.$id) {
+      {/* Event Schedule Modal (Admin & Manager Only) */}
+      {AuthService.canScheduleGames(currentUser?.role) && (
+        <EventScheduleModal
+          isOpen={isScheduleModalOpen}
+          onClose={() => {
+            setIsScheduleModalOpen(false);
+            setGameToEdit(null);
+          }}
+          gameToEdit={gameToEdit}
+          venues={leagueVenues.length > 0 ? leagueVenues : venues}
+          seasons={leagueSeasons.length > 0 ? leagueSeasons : seasons}
+          players={players}
+          defaultSeasonId={urlSeason?.$id}
+          onGameSaved={(savedGame) => {
+            if (gameToEdit) {
+              setGames((prev) => prev.map((g) => (g.$id === savedGame.$id ? savedGame : g)));
+              if (selectedGame?.$id === savedGame.$id) {
+                setSelectedGame(savedGame);
+              }
+            } else {
+              setGames((prev) => [savedGame, ...prev]);
               setSelectedGame(savedGame);
             }
-          } else {
-            setGames((prev) => [savedGame, ...prev]);
-            setSelectedGame(savedGame);
-          }
-        }}
-        onGamesSaved={(newGames) => {
-          setGames((prev) => [...newGames, ...prev]);
-          if (newGames.length > 0) {
-            setSelectedGame(newGames[0]);
-          }
-        }}
-        onGameDeleted={(deletedId) => {
-          setGames((prev) => prev.filter((g) => g.$id !== deletedId));
-          if (selectedGame?.$id === deletedId && games.length > 1) {
-            const fallback = games.find((g) => g.$id !== deletedId);
-            if (fallback) setSelectedGame(fallback);
-          }
-        }}
-      />
+          }}
+          onGamesSaved={(newGames) => {
+            setGames((prev) => [...newGames, ...prev]);
+            if (newGames.length > 0) {
+              setSelectedGame(newGames[0]);
+            }
+          }}
+          onGameDeleted={(deletedId) => {
+            setGames((prev) => prev.filter((g) => g.$id !== deletedId));
+            if (selectedGame?.$id === deletedId && games.length > 1) {
+              const fallback = games.find((g) => g.$id !== deletedId);
+              if (fallback) setSelectedGame(fallback);
+            }
+          }}
+        />
+      )}
     </div>
   );
 };

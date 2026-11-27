@@ -11,10 +11,18 @@ import type {
 } from '../types/holdem';
 import {
   createEliminationNotification,
+  createPlacementNotification,
+  createShowUpCutoffNotification,
   diffEntryForScoreEvents,
   type LiveScoreNotification,
 } from '@/lib/liveScoreEvents';
 import { QuickScoreStrip } from './director/QuickScoreStrip';
+import { useGameClock } from '@/hooks/useGameClock';
+import {
+  applyLevelDurationOverrides,
+  formatClockTime,
+  getServerNowMs,
+} from '@/lib/gameClock';
 import { AppwriteService } from '../services/appwriteService';
 import { AuthService } from '../services/authService';
 import { PlayerSeatingModal } from './PlayerSeatingModal';
@@ -74,7 +82,7 @@ interface DirectorDeskProps {
   venues?: Venue[];
   seasons?: Season[];
   allGames?: Game[];
-  userRole?: UserRole;
+  userRole?: UserRole | null;
   onUpdateGame: (updatedGame: Game) => void;
   onEliminatePlayer: (
     entryId: string,
@@ -102,7 +110,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   activeGame,
   gameEntries,
   players,
-  userRole = 'manager',
+  userRole = null,
   onUpdateGame,
   onEliminatePlayer,
   onTournamentFinalized,
@@ -114,10 +122,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   onEmitScoreEvent,
   onRecordLocalEntriesSnapshot,
 }) => {
-  // Clock state
-  const [isRunning, setIsRunning] = useState<boolean>(activeGame.status === 'running');
-  const [currentLevelIndex, setCurrentLevelIndex] = useState<number>(activeGame.currentLevelIndex);
-  const [secondsLeft, setSecondsLeft] = useState<number>(activeGame.secondsRemainingInLevel);
+  // Local UI state (clock itself is derived deterministically from the backend anchor via useGameClock)
   const [overrideMinutesInput, setOverrideMinutesInput] = useState<string>('');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [deskTab, setDeskTab] = useState<'cockpit' | 'scorecard'>(
@@ -133,39 +138,50 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   const [isFinalizeDialogOpen, setIsFinalizeDialogOpen] = useState<boolean>(false);
   const [finalSuccessMsg, setFinalSuccessMsg] = useState<string>('');
 
-  const currentLevel = activeGame.blindSchedule[currentLevelIndex] || activeGame.blindSchedule[0];
-  const nextLevel = activeGame.blindSchedule[currentLevelIndex + 1];
-
   const canManageClock = AuthService.canManageClock(userRole);
+  const canSeatPlayers = AuthService.canSeatPlayers(userRole);
   const canEditScorecard = AuthService.canRecordBusts(userRole);
-  const canFinalizeTournament = AuthService.canAccessAdmin(userRole);
+  const canFinalizeTournament = AuthService.canFinalizeTournament(userRole);
 
   const activeGameRef = useRef<Game>(activeGame);
   const onUpdateGameRef = useRef(onUpdateGame);
   const gameEntriesRef = useRef<GameEntry[]>(gameEntries);
   const onEntriesChangeRef = useRef(onEntriesChange);
-  const levelIndexRef = useRef<number>(currentLevelIndex);
-  const secondsLeftRef = useRef<number>(secondsLeft);
+  const onEmitScoreEventRef = useRef(onEmitScoreEvent);
+  const onRecordLocalSnapshotRef = useRef(onRecordLocalEntriesSnapshot);
+  const localClockSeqRef = useRef<number>(0);
+  const showUpAppliedForGameRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     activeGameRef.current = activeGame;
     onUpdateGameRef.current = onUpdateGame;
     gameEntriesRef.current = gameEntries;
     onEntriesChangeRef.current = onEntriesChange;
+    onEmitScoreEventRef.current = onEmitScoreEvent;
+    onRecordLocalSnapshotRef.current = onRecordLocalEntriesSnapshot;
   });
 
   const applyShowUpCutoffIfReached = (prevLevelIdx: number, nextGame: Game) => {
     const nextLevelIdx = nextGame.currentLevelIndex;
     if (
       prevLevelIdx < SHOW_UP_CUTOFF_LEVEL_INDEX &&
-      nextLevelIdx >= SHOW_UP_CUTOFF_LEVEL_INDEX
+      nextLevelIdx >= SHOW_UP_CUTOFF_LEVEL_INDEX &&
+      !showUpAppliedForGameRef.current.has(nextGame.$id)
     ) {
+      showUpAppliedForGameRef.current.add(nextGame.$id);
       const updatedEntries = gameEntriesRef.current.map((entry) => {
         const awarded = entry.showUpAwarded === false ? false : true;
         return syncEntryCalculatedFields({ ...entry, showUpAwarded: awarded }, nextGame);
       });
+      const awardedCount = updatedEntries.filter(
+        (entry) => entry.showUpAwarded !== false && getEntryStatus(entry) !== 'MUCK'
+      ).length;
       gameEntriesRef.current = updatedEntries;
+      onRecordLocalSnapshotRef.current?.(nextGame.$id, updatedEntries);
       onEntriesChangeRef.current(updatedEntries);
+      if (awardedCount > 0) {
+        onEmitScoreEventRef.current?.(createShowUpCutoffNotification(nextGame, awardedCount));
+      }
       void Promise.all(
         updatedEntries.map((entry) =>
           AppwriteService.updateGameEntryScoring(entry.$id, {
@@ -179,131 +195,121 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
     }
   };
 
-  useEffect(() => {
-    levelIndexRef.current = currentLevelIndex;
-  }, [currentLevelIndex]);
-
-  useEffect(() => {
-    secondsLeftRef.current = secondsLeft;
-  }, [secondsLeft]);
-
-  // Sync clock if activeGame ID changes
-  useEffect(() => {
-    const nextLevelIdx = activeGameRef.current.currentLevelIndex || 0;
-    const nextSecs = activeGameRef.current.secondsRemainingInLevel || 900;
-    const nextRunning = activeGameRef.current.status === 'running';
-    levelIndexRef.current = nextLevelIdx;
-    secondsLeftRef.current = nextSecs;
-    setCurrentLevelIndex(nextLevelIdx);
-    setSecondsLeft(nextSecs);
-    setIsRunning(nextRunning);
-  }, [activeGame.$id]);
-
-  // Timer Tick Engine — updates local & parent state side-by-side inside interval callback
-  useEffect(() => {
-    if (!isRunning) return;
-    const interval = setInterval(() => {
+  // Backend-authoritative tournament clock (single source of truth across all connected users)
+  const {
+    currentLevelIndex,
+    secondsRemaining: secondsLeft,
+    isRunning,
+    currentLevel,
+    nextLevel,
+    effectiveSchedule,
+  } = useGameClock(activeGame, {
+    onLevelAdvanced: (prevIdx, nextIdx, nextSecs) => {
+      if (!canManageClock) return;
       const game = activeGameRef.current;
-      const lvlIdx = levelIndexRef.current;
-      const currentSec = secondsLeftRef.current;
+      const nextGame: Game = {
+        ...game,
+        currentLevelIndex: nextIdx,
+        secondsRemainingInLevel: nextSecs,
+      };
+      applyShowUpCutoffIfReached(prevIdx, nextGame);
+    },
+  });
 
-      if (currentSec > 1) {
-        const nextSec = currentSec - 1;
-        secondsLeftRef.current = nextSec;
-        setSecondsLeft(nextSec);
-        onUpdateGameRef.current({
-          ...game,
-          currentLevelIndex: lvlIdx,
-          secondsRemainingInLevel: nextSec,
-          status: 'running',
-        });
-      } else if (lvlIdx < game.blindSchedule.length - 1) {
-        const nextIdx = lvlIdx + 1;
-        const nextSecs = game.blindSchedule[nextIdx].durationMinutes * 60;
-        levelIndexRef.current = nextIdx;
-        secondsLeftRef.current = nextSecs;
-        setCurrentLevelIndex(nextIdx);
-        setSecondsLeft(nextSecs);
-        const nextGame: Game = {
-          ...game,
-          currentLevelIndex: nextIdx,
-          secondsRemainingInLevel: nextSecs,
-          status: 'running',
-        };
-        onUpdateGameRef.current(nextGame);
-        applyShowUpCutoffIfReached(lvlIdx, nextGame);
-        void AppwriteService.updateGameClock(game.$id, nextIdx, nextSecs);
-      } else {
-        secondsLeftRef.current = 0;
-        setSecondsLeft(0);
-        setIsRunning(false);
-      }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isRunning]);
+  // Live view of activeGame with backend-computed currentLevelIndex & schedule overrides
+  const liveGame: Game = {
+    ...activeGame,
+    currentLevelIndex,
+    secondsRemainingInLevel: secondsLeft,
+    blindSchedule: effectiveSchedule,
+  };
 
-  // Periodic writeback every 5s while running
-  useEffect(() => {
-    if (!isRunning) return;
-    const syncInterval = setInterval(() => {
-      void AppwriteService.updateGameClock(
-        activeGameRef.current.$id,
-        levelIndexRef.current,
-        secondsLeftRef.current
-      );
-    }, 5000);
-    return () => clearInterval(syncInterval);
-  }, [isRunning, activeGame.$id]);
+  const commitClockMutation = (next: {
+    status: Game['status'];
+    currentLevelIndex: number;
+    secondsRemainingInLevel: number;
+    levelDurationOverrides?: Record<number, number>;
+  }) => {
+    const game = activeGameRef.current;
+    const seq = ++localClockSeqRef.current;
+    const overrides = next.levelDurationOverrides ?? game.levelDurationOverrides;
+    const updatedSchedule = applyLevelDurationOverrides(game.blindSchedule, overrides);
+    const optimisticAnchor = new Date(getServerNowMs()).toISOString();
 
-  const formatTime = (totalSeconds: number) => {
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    const optimisticGame: Game = {
+      ...game,
+      status: next.status,
+      currentLevelIndex: next.currentLevelIndex,
+      secondsRemainingInLevel: next.secondsRemainingInLevel,
+      clockAnchorAt: optimisticAnchor,
+      levelDurationOverrides: overrides,
+      blindSchedule: updatedSchedule,
+    };
+    onUpdateGameRef.current(optimisticGame);
+
+    void AppwriteService.saveGameClockState(game.$id, {
+      status: next.status,
+      currentLevelIndex: next.currentLevelIndex,
+      secondsRemainingInLevel: next.secondsRemainingInLevel,
+      levelDurationOverrides: overrides,
+    }).then((snapshot) => {
+      // Only apply server-stamped anchor if this is still the latest local clock command
+      if (seq !== localClockSeqRef.current) return;
+      const latest = activeGameRef.current;
+      if (latest.$id !== game.$id) return;
+      onUpdateGameRef.current({
+        ...latest,
+        status: snapshot.status,
+        currentLevelIndex: snapshot.currentLevelIndex,
+        secondsRemainingInLevel: snapshot.secondsRemainingInLevel,
+        clockAnchorAt: snapshot.clockAnchorAt,
+        levelDurationOverrides: snapshot.levelDurationOverrides,
+        blindSchedule: applyLevelDurationOverrides(
+          latest.blindSchedule,
+          snapshot.levelDurationOverrides
+        ),
+      });
+    });
   };
 
   const handleToggleTimer = () => {
     if (!canManageClock) return;
     const nextRunning = !isRunning;
-    setIsRunning(nextRunning);
-    onUpdateGame({
-      ...activeGame,
+    commitClockMutation({
+      status: nextRunning ? 'running' : 'paused',
       currentLevelIndex,
       secondsRemainingInLevel: secondsLeft,
-      status: nextRunning ? 'running' : 'paused',
     });
-    AppwriteService.updateGameClock(activeGame.$id, currentLevelIndex, secondsLeft);
-    AppwriteService.updateGameStatus(activeGame.$id, nextRunning ? 'running' : 'paused');
   };
 
   const handleSkipLevel = () => {
     if (!canManageClock) return;
-    if (currentLevelIndex < activeGame.blindSchedule.length - 1) {
+    if (currentLevelIndex < effectiveSchedule.length - 1) {
       const prevIdx = currentLevelIndex;
       const nextIdx = currentLevelIndex + 1;
-      const nextSecs = activeGame.blindSchedule[nextIdx].durationMinutes * 60;
-      setCurrentLevelIndex(nextIdx);
-      setSecondsLeft(nextSecs);
+      const nextSecs = effectiveSchedule[nextIdx].durationMinutes * 60;
       const nextGame: Game = {
-        ...activeGame,
+        ...liveGame,
         currentLevelIndex: nextIdx,
         secondsRemainingInLevel: nextSecs,
       };
-      onUpdateGame(nextGame);
       applyShowUpCutoffIfReached(prevIdx, nextGame);
-      AppwriteService.updateGameClock(activeGame.$id, nextIdx, nextSecs);
+      commitClockMutation({
+        status: activeGame.status,
+        currentLevelIndex: nextIdx,
+        secondsRemainingInLevel: nextSecs,
+      });
     }
   };
 
   const handleAdjustSeconds = (deltaSeconds: number) => {
     if (!canManageClock) return;
     const nextSecs = Math.max(0, secondsLeft + deltaSeconds);
-    setSecondsLeft(nextSecs);
-    onUpdateGame({
-      ...activeGame,
+    commitClockMutation({
+      status: activeGame.status,
       currentLevelIndex,
       secondsRemainingInLevel: nextSecs,
     });
-    AppwriteService.updateGameClock(activeGame.$id, currentLevelIndex, nextSecs);
   };
 
   const handleManualTimeOverride = (e: React.FormEvent) => {
@@ -312,34 +318,32 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
     const mins = Number(overrideMinutesInput);
     if (!Number.isFinite(mins) || mins <= 0) return;
     const nextSecs = Math.round(mins * 60);
-    setSecondsLeft(nextSecs);
-    const updatedSchedule = activeGame.blindSchedule.map((lvl, idx) =>
-      idx === currentLevelIndex ? { ...lvl, durationMinutes: mins } : lvl
-    );
-    onUpdateGame({
-      ...activeGame,
-      blindSchedule: updatedSchedule,
+    const nextOverrides: Record<number, number> = {
+      ...(activeGame.levelDurationOverrides || {}),
+      [currentLevelIndex]: mins,
+    };
+    commitClockMutation({
+      status: activeGame.status,
       currentLevelIndex,
       secondsRemainingInLevel: nextSecs,
+      levelDurationOverrides: nextOverrides,
     });
-    AppwriteService.updateGameClock(activeGame.$id, currentLevelIndex, nextSecs);
     setOverrideMinutesInput('');
   };
 
   const handleResetLevel = () => {
     if (!canManageClock) return;
     const defaultSecs = currentLevel.durationMinutes * 60;
-    setSecondsLeft(defaultSecs);
-    onUpdateGame({
-      ...activeGame,
+    commitClockMutation({
+      status: activeGame.status,
       currentLevelIndex,
       secondsRemainingInLevel: defaultSecs,
     });
-    AppwriteService.updateGameClock(activeGame.$id, currentLevelIndex, defaultSecs);
   };
 
   // Seating & Rebuys Handlers
   const handleSeatPlayer = async (player: Player, tableNumber: number, seatNumber: number) => {
+    if (!canSeatPlayers || activeGame.status === 'completed') return;
     const createdEntry = await AppwriteService.addGameEntry(
       activeGame.$id,
       player,
@@ -367,6 +371,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleAdjustRebuys = async (entryId: string, delta: number) => {
+    if (!canEditScorecard || activeGame.status === 'completed') return;
     const entry = gameEntries.find((e) => e.$id === entryId);
     if (!entry) return;
     const nextRebuys = Math.max(0, entry.rebuysCount + delta);
@@ -390,6 +395,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleAdjustAddons = async (entryId: string, delta: number) => {
+    if (!canEditScorecard || activeGame.status === 'completed') return;
     const entry = gameEntries.find((e) => e.$id === entryId);
     if (!entry) return;
     const nextAddons = Math.max(0, entry.addonsCount + delta);
@@ -403,6 +409,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleUpdateSessionRules = async (updates: Partial<Game>) => {
+    if (!canEditScorecard || activeGame.status === 'completed') return;
     const updatedGame: Game = { ...activeGame, ...updates };
     onUpdateGame(updatedGame);
     // Recompute live cached base/final points for entries when multiplier or No-Game changes
@@ -420,17 +427,18 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleUpdateEntryScoring = async (entryId: string, updates: Partial<GameEntry>) => {
+    if (!canEditScorecard || activeGame.status === 'completed') return;
     const target = gameEntries.find((e) => e.$id === entryId);
     if (!target) return;
 
     const synced = syncEntryCalculatedFields({ ...target, ...updates }, activeGame);
     const updatedEntries = gameEntries.map((e) => (e.$id === entryId ? synced : e));
 
-    onRecordLocalEntriesSnapshot?.(activeGame.$id, updatedEntries, synced);
     const events = diffEntryForScoreEvents(target, synced, activeGame, updatedEntries);
     for (const ev of events) {
       onEmitScoreEvent?.(ev);
     }
+    onRecordLocalEntriesSnapshot?.(activeGame.$id, updatedEntries, synced);
 
     onEntriesChange(updatedEntries);
 
@@ -443,6 +451,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   };
 
   const handleConfirmElimination = async (payload: EliminationConfirmPayload) => {
+    if (!canEditScorecard || activeGame.status === 'completed') return;
     const targetEntry = gameEntries.find((e) => e.$id === payload.eliminatedEntryId);
     if (!targetEntry) return;
 
@@ -460,6 +469,31 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       finishPosition: finishPos,
       isMuck: payload.isMuck,
     });
+    const nextEntriesSnapshot = gameEntries.map((entry) => {
+      if (entry.$id === targetEntry.$id) {
+        return syncEntryCalculatedFields(
+          {
+            ...entry,
+            status: payload.isMuck ? 'MUCK' : 'ELIMINATED',
+            isEliminated: true,
+            finishPosition: finishPos,
+            eliminatedBySeat: koWinnerEntry?.seatNumber,
+            knockedOutByPlayerId: koWinnerEntry?.playerId,
+            knockedOutByPlayerName: koWinnerEntry?.playerName,
+          },
+          activeGame
+        );
+      }
+      if (koWinnerEntry && payload.koType && entry.$id === koWinnerEntry.$id) {
+        const nextKOs: KnockoutCode[] = [...(entry.knockouts || []), payload.koType];
+        return syncEntryCalculatedFields(
+          { ...entry, knockouts: nextKOs, kosCount: nextKOs.length },
+          activeGame
+        );
+      }
+      return entry;
+    });
+    onRecordLocalEntriesSnapshot?.(activeGame.$id, nextEntriesSnapshot);
     onEmitScoreEvent?.(elimNotification);
 
     onEliminatePlayer(
@@ -494,12 +528,53 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
   // Tournament Finalization using official Jack Ten Poker scoring engine
   const handleConfirmFinalization = async (results: FinalizedEntryResult[]) => {
+    if (!canFinalizeTournament || activeGame.status === 'completed') return;
+    const finalizedEntries = gameEntries.map((entry) => {
+      const res = results.find((r) => r.entryId === entry.$id);
+      if (!res) return entry;
+      return {
+        ...entry,
+        finishPosition: res.finishPosition,
+        status: res.status,
+        isEliminated: res.finishPosition > 1 || res.status === 'MUCK',
+        earnedDgForNextGame: res.earnedDgForNextGame,
+        calculatedBasePoints: res.basePoints,
+        calculatedFinalPoints: res.finalPoints,
+        pointsAwarded: res.finalPoints,
+        knockouts: res.knockouts,
+        kosCount: res.knockouts.length,
+        handBonuses: res.handBonuses,
+      };
+    });
+    onRecordLocalEntriesSnapshot?.(activeGame.$id, finalizedEntries);
+
+    const winner = results.find((r) => r.finishPosition === 1 && r.status !== 'MUCK');
+    if (winner) {
+      const winnerEntry = gameEntries.find((e) => e.$id === winner.entryId);
+      onEmitScoreEvent?.(
+        createPlacementNotification({
+          game: activeGame,
+          playerId: winner.playerId,
+          playerName: winnerEntry?.playerName || 'Champion',
+          finishPosition: 1,
+          pointsAwarded: winner.finalPoints,
+        })
+      );
+    }
+
     await AppwriteService.finalizeTournament(activeGame.$id, results);
+    void AppwriteService.saveGameClockState(activeGame.$id, {
+      status: 'completed',
+      currentLevelIndex,
+      secondsRemainingInLevel: 0,
+      levelDurationOverrides: activeGame.levelDurationOverrides,
+    });
     onTournamentFinalized?.(results);
 
     onUpdateGame({
-      ...activeGame,
+      ...liveGame,
       status: 'completed',
+      secondsRemainingInLevel: 0,
       remainingPlayersCount: 0,
     });
 
@@ -536,8 +611,9 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       <div className="no-print glass-panel rounded-2xl p-5 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="success">
-              <SlidersHorizontal className="w-3 h-3" /> DIRECTOR CONTROL CENTER
+            <Badge variant={canEditScorecard ? 'success' : 'secondary'}>
+              <SlidersHorizontal className="w-3 h-3" />{' '}
+              {canEditScorecard ? 'DIRECTOR CONTROL CENTER' : 'LIVE TOURNAMENT VIEW'}
             </Badge>
             <span className="text-xs text-slate-400">{activeGame.venueName}</span>
             <Badge variant={(activeGame.pointMultiplier ?? 1) > 1 ? 'default' : 'secondary'}>
@@ -664,7 +740,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
           {scorecardMode === 'paper' ? (
             <PaperScorecardView
-              game={activeGame}
+              game={liveGame}
               entries={gameEntries}
               canEdit={canEditScorecard}
               onSelectEntry={(entryId) => setScoringEntryId(entryId)}
@@ -672,7 +748,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
           ) : (
             <>
               <SessionRulesBar
-                game={activeGame}
+                game={liveGame}
                 players={players}
                 canEdit={canEditScorecard}
                 onUpdateSessionRules={handleUpdateSessionRules}
@@ -689,7 +765,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                 }}
               />
               <ScorecardTable
-                game={activeGame}
+                game={liveGame}
                 entries={gameEntries}
                 canEdit={canEditScorecard}
                 highlightedPlayers={highlightedPlayers}
@@ -711,10 +787,10 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                   <Sparkles className="w-4 h-4" /> LEVEL {currentLevel.level} {currentLevel.isBreak && '(BREAK)'}
                 </span>
                 <Badge
-                  variant={hasReachedShowUpCutoff(activeGame) ? 'success' : 'secondary'}
+                  variant={hasReachedShowUpCutoff(liveGame) ? 'success' : 'secondary'}
                   className="text-[10px] font-bold tracking-normal normal-case"
                 >
-                  {hasReachedShowUpCutoff(activeGame)
+                  {hasReachedShowUpCutoff(liveGame)
                     ? 'Show Up (+600) Awarded (1:15 Passed)'
                     : 'Show Up (+600) Unlocks at 1:15 Mark'}
                 </Badge>
@@ -736,7 +812,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
             {/* Digital Clock Display */}
             <div className="text-center py-4 felt-gradient rounded-2xl border border-emerald-500/40 felt-glow">
               <div className="text-6xl md:text-8xl font-mono font-black tracking-tight text-white drop-shadow-lg">
-                {formatTime(secondsLeft)}
+                {formatClockTime(secondsLeft)}
               </div>
 
               <div className="mt-4 flex flex-wrap items-center justify-center gap-6 text-sm text-slate-200">
@@ -874,17 +950,19 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                     <Award className="w-4 h-4" /> Add Points
                   </Button>
                 )}
-                <Button
-                  type="button"
-                  variant="success"
-                  onClick={() => {
-                    setSeatingInitialPlayerId(null);
-                    setIsSeatingModalOpen(true);
-                  }}
-                  className="h-11 px-4 text-xs sm:text-sm"
-                >
-                  <UserPlus className="w-4 h-4" /> Seat Player
-                </Button>
+                {canSeatPlayers && activeGame.status !== 'completed' && (
+                  <Button
+                    type="button"
+                    variant="success"
+                    onClick={() => {
+                      setSeatingInitialPlayerId(null);
+                      setIsSeatingModalOpen(true);
+                    }}
+                    className="h-11 px-4 text-xs sm:text-sm"
+                  >
+                    <UserPlus className="w-4 h-4" /> Seat Player
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1081,55 +1159,63 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       {/* MODALS                                                   */}
       {/* ======================================================== */}
 
-      {/* 1. RSVP & Walk-in Player Seating Modal */}
-      <PlayerSeatingModal
-        isOpen={isSeatingModalOpen}
-        onClose={() => {
-          setIsSeatingModalOpen(false);
-          setSeatingInitialPlayerId(null);
-        }}
-        availablePlayers={players}
-        currentEntries={gameEntries}
-        rsvpPlayerIds={activeGame.rsvpPlayerIds || []}
-        initialPlayerId={seatingInitialPlayerId}
-        onConfirmSeat={handleSeatPlayer}
-      />
+      {/* 1. RSVP & Walk-in Player Seating Modal (Staff Only) */}
+      {canSeatPlayers && (
+        <PlayerSeatingModal
+          isOpen={isSeatingModalOpen}
+          onClose={() => {
+            setIsSeatingModalOpen(false);
+            setSeatingInitialPlayerId(null);
+          }}
+          availablePlayers={players}
+          currentEntries={gameEntries}
+          rsvpPlayerIds={activeGame.rsvpPlayerIds || []}
+          initialPlayerId={seatingInitialPlayerId}
+          onConfirmSeat={handleSeatPlayer}
+        />
+      )}
 
-      {/* 2. Mobile-Friendly Unified Player Actions & Points Dialog */}
-      <PlayerScoreDialog
-        isOpen={Boolean(scoringEntryId)}
-        game={activeGame}
-        entries={gameEntries}
-        selectedEntryId={scoringEntryId}
-        onSelectEntryId={(entryId) => setScoringEntryId(entryId)}
-        onClose={() => setScoringEntryId(null)}
-        onUpdateEntry={handleUpdateEntryScoring}
-        onAdjustRebuys={handleAdjustRebuys}
-        onAdjustAddons={handleAdjustAddons}
-        onRequestEliminate={(entry) => setSelectedEntryToEliminate(entry)}
-      />
+      {/* 2. Mobile-Friendly Unified Player Actions & Points Dialog (Staff Only) */}
+      {canEditScorecard && (
+        <PlayerScoreDialog
+          isOpen={Boolean(scoringEntryId)}
+          game={liveGame}
+          entries={gameEntries}
+          selectedEntryId={scoringEntryId}
+          onSelectEntryId={(entryId) => setScoringEntryId(entryId)}
+          onClose={() => setScoringEntryId(null)}
+          onUpdateEntry={handleUpdateEntryScoring}
+          onAdjustRebuys={handleAdjustRebuys}
+          onAdjustAddons={handleAdjustAddons}
+          onRequestEliminate={(entry) => setSelectedEntryToEliminate(entry)}
+        />
+      )}
 
-      {/* 3. Accessible Elimination & Knockout Audit Dialog */}
-      <EliminationDialog
-        entry={selectedEntryToEliminate}
-        eligibleEliminators={gameEntries.filter(
-          (ge) =>
-            getEntryStatus(ge) === 'ACTIVE' &&
-            ge.$id !== selectedEntryToEliminate?.$id
-        )}
-        finishPositionPreview={activeEntries.length}
-        onClose={() => setSelectedEntryToEliminate(null)}
-        onConfirm={handleConfirmElimination}
-      />
+      {/* 3. Accessible Elimination & Knockout Audit Dialog (Staff Only) */}
+      {canEditScorecard && (
+        <EliminationDialog
+          entry={selectedEntryToEliminate}
+          eligibleEliminators={gameEntries.filter(
+            (ge) =>
+              getEntryStatus(ge) === 'ACTIVE' &&
+              ge.$id !== selectedEntryToEliminate?.$id
+          )}
+          finishPositionPreview={activeEntries.length}
+          onClose={() => setSelectedEntryToEliminate(null)}
+          onConfirm={handleConfirmElimination}
+        />
+      )}
 
-      {/* 3. Official Finalization & Scoring Preview Dialog */}
-      <FinalizeTournamentDialog
-        isOpen={isFinalizeDialogOpen}
-        game={activeGame}
-        entries={gameEntries}
-        onClose={() => setIsFinalizeDialogOpen(false)}
-        onConfirmFinalize={handleConfirmFinalization}
-      />
+      {/* 4. Official Finalization & Scoring Preview Dialog (Admin & Manager Only) */}
+      {canFinalizeTournament && (
+        <FinalizeTournamentDialog
+          isOpen={isFinalizeDialogOpen}
+          game={liveGame}
+          entries={gameEntries}
+          onClose={() => setIsFinalizeDialogOpen(false)}
+          onConfirmFinalize={handleConfirmFinalization}
+        />
+      )}
 
     </div>
   );

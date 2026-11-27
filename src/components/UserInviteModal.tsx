@@ -27,12 +27,16 @@ import { Label } from '@/components/ui/label';
 interface UserInviteModalProps {
   isOpen: boolean;
   onClose: () => void;
+  canAssignAdmin?: boolean;
+  actorRole?: UserRole;
   onUserCreated: (newUser: UserProfile) => void;
 }
 
 export const UserInviteModal: React.FC<UserInviteModalProps> = ({
   isOpen,
   onClose,
+  canAssignAdmin = false,
+  actorRole,
   onUserCreated,
 }) => {
   const [name, setName] = useState('');
@@ -56,7 +60,13 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
     setErrorMsg('');
 
     try {
-      const created = await AuthService.createUser(name.trim(), email.trim(), role);
+      const effectiveRole: UserRole = role === 'admin' && !canAssignAdmin ? 'manager' : role;
+      const created = await AuthService.createUser(
+        name.trim(),
+        email.trim(),
+        effectiveRole,
+        actorRole
+      );
       onUserCreated(created);
       onClose();
     } catch (e: unknown) {
@@ -133,25 +143,27 @@ export const UserInviteModal: React.FC<UserInviteModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               
-              {/* Admin */}
-              <div
-                onClick={() => setRole('admin')}
-                className={`p-3 rounded-xl border cursor-pointer transition-all ${
-                  role === 'admin'
-                    ? 'bg-rose-500/15 border-rose-500/60 ring-1 ring-rose-500'
-                    : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-xs text-rose-300 flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-rose-400" /> Platform Admin
-                  </span>
-                  {role === 'admin' && <CheckCircle2 className="w-4 h-4 text-rose-400" />}
+              {/* Admin (Platform Admin Only) */}
+              {canAssignAdmin && (
+                <div
+                  onClick={() => setRole('admin')}
+                  className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                    role === 'admin'
+                      ? 'bg-rose-500/15 border-rose-500/60 ring-1 ring-rose-500'
+                      : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs text-rose-300 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-rose-400" /> Platform Admin
+                    </span>
+                    {role === 'admin' && <CheckCircle2 className="w-4 h-4 text-rose-400" />}
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-tight">
+                    Superuser: Create leagues, assign league managers &amp; full access
+                  </p>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight">
-                  Superuser: Create leagues, assign league managers &amp; full access
-                </p>
-              </div>
+              )}
 
               {/* Manager */}
               <div

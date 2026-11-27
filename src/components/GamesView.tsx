@@ -42,7 +42,8 @@ interface GamesViewProps {
   announcements: Announcement[];
   hotHand?: HotHandJackpot | null;
   onSelectGame: (game: Game) => void;
-  isDirector?: boolean;
+  canManageVenues?: boolean;
+  canScheduleGames?: boolean;
   onOpenScheduleModal?: () => void;
   onOpenVenueModal?: () => void;
   seasonName?: string;
@@ -66,7 +67,8 @@ export const GamesView: React.FC<GamesViewProps> = ({
   announcements,
   hotHand = null,
   onSelectGame,
-  isDirector,
+  canManageVenues = false,
+  canScheduleGames = false,
   onOpenScheduleModal,
   onOpenVenueModal,
   seasonName = 'Active Season',
@@ -358,9 +360,9 @@ export const GamesView: React.FC<GamesViewProps> = ({
             <span className="text-xs text-slate-400">Tap any game for full blind timer & seating</span>
           </div>
 
-          {isDirector && (
+          {(canManageVenues || canScheduleGames) && (
             <div className="flex items-center gap-2">
-              {onOpenVenueModal && (
+              {canManageVenues && onOpenVenueModal && (
                 <button
                   onClick={onOpenVenueModal}
                   className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs font-semibold transition-all shadow-sm"
@@ -368,7 +370,7 @@ export const GamesView: React.FC<GamesViewProps> = ({
                   Venues Hub
                 </button>
               )}
-              {onOpenScheduleModal && (
+              {canScheduleGames && onOpenScheduleModal && (
                 <button
                   onClick={onOpenScheduleModal}
                   className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all shadow-md"
@@ -402,7 +404,7 @@ export const GamesView: React.FC<GamesViewProps> = ({
                   View All Seasons
                 </Button>
               )}
-              {isDirector && onOpenScheduleModal && (
+              {canScheduleGames && onOpenScheduleModal && (
                 <Button variant="default" size="sm" onClick={onOpenScheduleModal}>
                   + Schedule Event
                 </Button>

@@ -103,6 +103,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<'all' | UserRole>('all');
 
   const activeSeason = seasons.find((s) => s.isActive) || seasons[0];
+  const actorRole = currentUser?.role;
+  const canAccessAdmin = AuthService.canAccessAdmin(actorRole);
+  const canManageLeagues = AuthService.canManageLeagues(actorRole);
+  const canAssignAdmin = AuthService.canAccessPlatformAdmin(actorRole);
 
   useEffect(() => {
     if (!initialLeagues || initialLeagues.length === 0) {
@@ -120,6 +124,25 @@ export const AdminView: React.FC<AdminViewProps> = ({
     };
   }, [players]);
 
+  if (!canAccessAdmin) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
+        <div className="w-14 h-14 mx-auto rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
+          <ShieldCheck className="w-7 h-7" />
+        </div>
+        <h1 className="text-2xl font-black text-white">Admin Access Required</h1>
+        <p className="text-sm text-slate-400">
+          This console is restricted to Platform Admins and League Managers.
+        </p>
+        {onBack && (
+          <Button variant="default" onClick={onBack}>
+            <ArrowLeft className="w-4 h-4" /> {backLabel}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   const showToast = (msg: string) => {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(''), 4000);
@@ -127,7 +150,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
   const handleQuickRoleSwitch = async (role: UserRole) => {
     onRoleChange(role);
-    showToast(`Switched active session role to: ${role.toUpperCase()}`);
+    showToast(`Switched demo session role to: ${role.toUpperCase()}`);
   };
 
   const handleQuickSetActiveSeason = async (seasonId: string) => {
@@ -140,6 +163,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
     leagueId: string,
     manager: { id: string; name: string; email: string }
   ) => {
+    if (!canManageLeagues) {
+      alert('Only Platform Admins can assign League Managers.');
+      return;
+    }
     await AppwriteService.assignLeagueManager(leagueId, manager);
     const updated = leagues.map((l) =>
       l.$id === leagueId
@@ -172,6 +199,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
     const targetUser = users.find((u) => u.$id === userId);
     if (!targetUser) return;
 
+    if (!AuthService.canAssignRole(actorRole, newRole)) {
+      alert('Only Platform Admins can assign the Admin role.');
+      return;
+    }
+    if (!AuthService.canModifyUser(actorRole, targetUser.role)) {
+      alert('Only Platform Admins can modify an Admin account.');
+      return;
+    }
+
     if (targetUser.role === 'admin' && newRole !== 'admin') {
       const adminCount = users.filter((u) => u.role === 'admin').length;
       if (adminCount <= 1) {
@@ -203,6 +239,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
       return;
     }
     const targetUser = users.find((u) => u.$id === userId);
+    if (targetUser && !AuthService.canModifyUser(actorRole, targetUser.role)) {
+      alert('Only Platform Admins can remove an Admin account.');
+      return;
+    }
     if (targetUser?.role === 'manager') {
       const managerCount = users.filter((u) => u.role === 'manager').length;
       if (managerCount <= 1) {
@@ -212,7 +252,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
     if (!window.confirm(`Are you sure you want to remove user "${userName}"?`)) return;
 
-    const updated = await AuthService.deleteUser(userId);
+    const updated = await AuthService.deleteUser(userId, actorRole);
     setUsers(updated);
     if (onPlayersChange) onPlayersChange(updated);
     showToast(`User "${userName}" has been removed.`);
@@ -363,6 +403,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           games={games}
           users={users}
           announcements={announcements}
+          canManageLeagues={canManageLeagues}
           onOpenSection={setActiveTab}
           onCreateGame={() => {
             setGameToEdit(null);
@@ -371,10 +412,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
           onCreateSeason={() => setIsSeasonModalOpen(true)}
           onCreateVenue={() => setIsVenueModalOpen(true)}
           onInviteUser={() => setIsInviteUserOpen(true)}
-          onCreateLeague={() => {
-            setLeagueToEdit(null);
-            setIsLeagueModalOpen(true);
-          }}
+          onCreateLeague={
+            canManageLeagues
+              ? () => {
+                  setLeagueToEdit(null);
+                  setIsLeagueModalOpen(true);
+                }
+              : undefined
+          }
           onEditGame={(game) => {
             setGameToEdit(game);
             setIsScheduleModalOpen(true);
@@ -389,11 +434,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
         <AdminLeaguesSection
           leagues={leagues}
           users={users}
+          canManageLeagues={canManageLeagues}
           onOpenCreateLeague={() => {
+            if (!canManageLeagues) return;
             setLeagueToEdit(null);
             setIsLeagueModalOpen(true);
           }}
           onEditLeague={(league) => {
+            if (!canManageLeagues) return;
             setLeagueToEdit(league);
             setIsLeagueModalOpen(true);
           }}
@@ -449,6 +497,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           users={users}
           filteredUsers={filteredUsers}
           currentUser={currentUser}
+          canAssignAdmin={canAssignAdmin}
           searchUserQuery={searchUserQuery}
           setSearchUserQuery={setSearchUserQuery}
           selectedRoleFilter={selectedRoleFilter}
@@ -521,19 +570,23 @@ export const AdminView: React.FC<AdminViewProps> = ({
       <UserInviteModal
         isOpen={isInviteUserOpen}
         onClose={() => setIsInviteUserOpen(false)}
+        canAssignAdmin={canAssignAdmin}
+        actorRole={actorRole}
         onUserCreated={handleUserCreated}
       />
 
-      <LeagueManagerModal
-        isOpen={isLeagueModalOpen}
-        onClose={() => {
-          setIsLeagueModalOpen(false);
-          setLeagueToEdit(null);
-        }}
-        leagueToEdit={leagueToEdit}
-        users={users}
-        onLeagueSaved={handleLeagueSaved}
-      />
+      {canManageLeagues && (
+        <LeagueManagerModal
+          isOpen={isLeagueModalOpen}
+          onClose={() => {
+            setIsLeagueModalOpen(false);
+            setLeagueToEdit(null);
+          }}
+          leagueToEdit={leagueToEdit}
+          users={users}
+          onLeagueSaved={handleLeagueSaved}
+        />
+      )}
     </div>
   );
 };

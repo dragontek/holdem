@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 export interface AdminLeaguesSectionProps {
   leagues: League[];
   users: UserProfile[];
+  canManageLeagues?: boolean;
   onOpenCreateLeague: () => void;
   onEditLeague: (league: League) => void;
   onQuickAssignManager: (leagueId: string, manager: { id: string; name: string; email: string }) => void;
@@ -16,6 +17,7 @@ export interface AdminLeaguesSectionProps {
 export const AdminLeaguesSection: React.FC<AdminLeaguesSectionProps> = ({
   leagues,
   users,
+  canManageLeagues = false,
   onOpenCreateLeague,
   onEditLeague,
   onQuickAssignManager,
@@ -29,18 +31,26 @@ export const AdminLeaguesSection: React.FC<AdminLeaguesSectionProps> = ({
             <Trophy className="w-5 h-5 text-amber-400" /> Leagues ({leagues.length})
           </h2>
           <p className="text-xs text-slate-400">
-            Create leagues and assign League Managers.
+            {canManageLeagues
+              ? 'Create leagues and assign League Managers.'
+              : 'Read-only overview. Creating leagues and assigning League Managers is restricted to Platform Admins.'}
           </p>
         </div>
 
-        <Button
-          variant="default"
-          size="sm"
-          onClick={onOpenCreateLeague}
-          className="self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" /> Create New League
-        </Button>
+        {canManageLeagues ? (
+          <Button
+            variant="default"
+            size="sm"
+            onClick={onOpenCreateLeague}
+            className="self-start sm:self-auto"
+          >
+            <Plus className="w-4 h-4" /> Create New League
+          </Button>
+        ) : (
+          <Badge variant="secondary" className="self-start sm:self-auto">
+            Platform Admin Only
+          </Badge>
+        )}
       </Card>
 
       {/* Leagues Grid */}
@@ -93,29 +103,31 @@ export const AdminLeaguesSection: React.FC<AdminLeaguesSectionProps> = ({
                       <div className="text-[11px] text-slate-400">{managerDisplayEmail}</div>
                     </div>
 
-                    <div className="shrink-0">
-                      <select
-                        value={league.managerId || ''}
-                        onChange={(e) => {
-                          const targetUser = users.find((u) => u.$id === e.target.value);
-                          if (targetUser) {
-                            onQuickAssignManager(league.$id, {
-                              id: targetUser.$id,
-                              name: targetUser.name,
-                              email: targetUser.email,
-                            });
-                          }
-                        }}
-                        className="bg-slate-900 text-xs font-semibold text-amber-400 border border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400"
-                      >
-                        <option value="" disabled>Change Manager...</option>
-                        {users.map((u) => (
-                          <option key={u.$id} value={u.$id}>
-                            {u.name || 'Unnamed User'} ({(u.role || 'player').toUpperCase()})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {canManageLeagues && (
+                      <div className="shrink-0">
+                        <select
+                          value={league.managerId || ''}
+                          onChange={(e) => {
+                            const targetUser = users.find((u) => u.$id === e.target.value);
+                            if (targetUser) {
+                              onQuickAssignManager(league.$id, {
+                                id: targetUser.$id,
+                                name: targetUser.name,
+                                email: targetUser.email,
+                              });
+                            }
+                          }}
+                          className="bg-slate-900 text-xs font-semibold text-amber-400 border border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400"
+                        >
+                          <option value="" disabled>Change Manager...</option>
+                          {users.map((u) => (
+                            <option key={u.$id} value={u.$id}>
+                              {u.name || 'Unnamed User'} ({(u.role || 'player').toUpperCase()})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -126,16 +138,18 @@ export const AdminLeaguesSection: React.FC<AdminLeaguesSectionProps> = ({
                   Established: {new Date(league.createdAt).toLocaleDateString()}
                 </span>
 
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onEditLeague(league)}
-                    className="text-xs h-8"
-                  >
-                    <Settings className="w-3.5 h-3.5 mr-1" /> Configure League
-                  </Button>
-                </div>
+                {canManageLeagues && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onEditLeague(league)}
+                      className="text-xs h-8"
+                    >
+                      <Settings className="w-3.5 h-3.5 mr-1" /> Configure League
+                    </Button>
+                  </div>
+                )}
               </div>
             </Card>
           );

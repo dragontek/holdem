@@ -12,6 +12,8 @@
     "reseed:appwrite": "tsx scripts/setupAppwrite.ts --reseed",
     "reset:appwrite": "tsx scripts/setupAppwrite.ts --reset",
     "bundle:site": "npm run build && tar -czf holdem-site.tar.gz -C dist .",
+    "build:pages": "VITE_BASE_PATH=/holdem/ npm run build",
+    "deploy:appwrite": "node scripts/deployAppwriteSite.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
     "commit:validate": "node scripts/validateCommitMsg.mjs"
   },

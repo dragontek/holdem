@@ -272,14 +272,65 @@ npm run bundle:site
 
 ---
 
-## 7. Git Branching, Conventional Commits & Semantic Releases
+## 7. Git Branching, Atomic Commits, Conventional Commits & Semantic Releases
 
-- **Primary Development Branch**: `develop` (all day-to-day feature/fix commits and PRs target `develop`).
-- **Production Release Branch**: `main` (updated by promoting/merging `develop` into `main`).
-- **Conventional Commits (Required)**: Every commit message and PR title MUST follow `<type>(<optional-scope>)[!]: <description>`:
-  - `feat:` → triggers **Minor** release (`v1.X.0`)
-  - `fix:`, `perf:`, `refactor:`, `revert:` → triggers **Patch** release (`v1.x.X`)
-  - `feat!:` / `BREAKING CHANGE:` → triggers **Major** release (`vX.0.0`)
-  - `docs:`, `ci:`, `build:`, `style:`, `test:`, `chore:` → no version bump unless paired with a release commit
-- **Local Hook**: Run `npm run hooks:install` once per clone to enable `.githooks/commit-msg`.
-- **Automated Releases**: Merging `develop` into `main` runs `.github/workflows/release.yml` (`semantic-release` via `.releaserc.json`), which verifies lint/build/bundle, computes the next `v1.x.x` tag, generates `CHANGELOG.md` and GitHub Release Notes from commits, attaches `holdem-site.tar.gz`, and syncs the release commit back to `develop`.
+### 7.1 Atomic, Logical Commit Discipline (STRICTLY REQUIRED)
+- **One Logical Change per Commit**: Always break work into focused, self-contained commits — never bundle multiple unrelated features, bug fixes, refactors, or docs updates into a single giant commit.
+- **How to Split Commits**:
+  - Separate **core domain/service logic**, **UI feature enhancements**, **bug fixes**, **refactoring**, and **documentation/tooling** into their own clean commits whenever they represent distinct logical units.
+  - Every commit must leave the repository in a clean, buildable state (no broken intermediate commits).
+  - Use selective staging (`git add <specific-files>` or `git add -p`) and verify `git diff --cached` before committing so unrelated local edits or formatting noise are never swept in.
+- **Why**: Atomic commits produce crisp, accurate automated release notes (`CHANGELOG.md`), simplify code review, and make `git bisect` and targeted `git revert` safe.
+
+### 7.2 Git Branching Policy
+- **Primary Development Branch (`develop`)**:
+  - `develop` is the default integration branch (`origin/HEAD`). All day-to-day feature work, bug fixes, docs, and pull requests MUST target `develop`.
+  - Short-lived working branches should branch from `develop` using clear prefixes (`feat/<topic>`, `fix/<topic>`, `chore/<topic>`, `docs/<topic>`) and merge back into `develop`.
+- **Production Release Branch (`main`)**:
+  - `main` represents production. Do **not** commit day-to-day features directly to `main`; promote tested changes by merging `develop` into `main` (via PR or fast-forward/merge promotion).
+  - After a release on `main`, the release workflow automatically syncs the version/changelog commit back into `develop` so histories stay aligned.
+- **Environment Deployments**:
+  - **DEV (`develop` → GitHub Pages)**: Every push to `develop` triggers `.github/workflows/deploy-dev.yml`, building with `VITE_BASE_PATH=/holdem/` (plus SPA `404.html` fallback) and deploying automatically to GitHub Pages.
+  - **PROD (`main` → Appwrite Sites)**: Merging/pushing `develop` into `main` triggers `.github/workflows/release.yml`, verifying lint/build/bundle, publishing the semantic release, and uploading + activating `holdem-site.tar.gz` on Appwrite Sites via `scripts/deployAppwriteSite.mjs`.
+
+### 7.3 Conventional Commits Policy (REQUIRED)
+Every commit message and PR title MUST adhere to the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+```text
+<type>(<optional-scope>)[!]: <short imperative description>
+
+[optional body explaining WHY, not just WHAT]
+
+[optional footer(s), e.g. BREAKING CHANGE: <migration details>]
+```
+
+- **Allowed Types**:
+  - `feat`: New user-facing feature or capability
+  - `fix`: Bug fix
+  - `perf`: Performance improvement
+  - `refactor`: Code restructuring without changing external behavior
+  - `docs`: Documentation changes (`AGENTS.md`, `README.md`, comments)
+  - `style`: Formatting/whitespace/lint-only changes (no logic change)
+  - `test`: Adding or updating tests
+  - `build`: Build system, bundler, or dependency changes
+  - `ci`: CI/CD workflow and pipeline changes
+  - `chore`: Maintenance tasks and repo hygiene
+  - `revert`: Reverting a prior commit
+- **Formatting Rules**:
+  - Subject line MUST be concise, lowercase after the colon, imperative mood (e.g., `fix(scoring): preserve hand bonuses across legacy realtime echoes`), and omit a trailing period.
+  - Scopes should reflect a clear domain area (e.g., `scoring`, `realtime`, `clock`, `rbac`, `auth`, `pwa`, `leaderboard`, `stats`, `director`, `admin`, `ci`, `docs`).
+- **Enforcement**:
+  - **Local**: Run `npm run hooks:install` once per clone to activate `.githooks/commit-msg` (backed by `scripts/validateCommitMsg.mjs`).
+  - **CI**: `.github/workflows/ci.yml` validates every commit message on pushes and pull requests.
+
+### 7.4 Semantic Versioning (`vMAJOR.MINOR.PATCH`) & Automated Releases
+This repository follows [Semantic Versioning 2.0.0](https://semver.org/) driven automatically by `semantic-release` (`.releaserc.json`) on `main`:
+
+| Commit Type / Marker | Version Bump | Example | Included in Release Notes |
+| :--- | :--- | :--- | :--- |
+| `feat!:` / `fix!:` / `BREAKING CHANGE:` | **Major** (`X.0.0`) | `v1.2.3` → `v2.0.0` | Yes (Breaking Changes) |
+| `feat:` | **Minor** (`1.X.0`) | `v1.0.0` → `v1.1.0` | Yes (Features) |
+| `fix:`, `perf:`, `refactor:`, `revert:` | **Patch** (`1.x.X`) | `v1.0.0` → `v1.0.1` | Yes (Bug Fixes / Performance / Refactors) |
+| `docs:`, `ci:`, `build:`, `style:`, `test:`, `chore:` | **None** | — | Only if bundled with a release-triggering commit |
+
+- Promoting `develop` → `main` automatically computes the next `v1.x.x` tag from commits since the last tag, updates `package.json` and `CHANGELOG.md`, publishes GitHub Release Notes (attaching `holdem-site.tar.gz`), syncs the release commit back to `develop`, and deploys to Appwrite Sites.

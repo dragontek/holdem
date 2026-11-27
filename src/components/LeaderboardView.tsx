@@ -4,14 +4,9 @@ import type { LiveScoreNotification } from '@/lib/liveScoreEvents';
 import { 
   Trophy, 
   Search, 
-  Filter, 
   Crown, 
-  Flame, 
-  Award, 
-  CheckCircle2, 
   ChevronRight, 
   Sparkles,
-  ShieldCheck
 } from 'lucide-react';
 
 interface LeaderboardViewProps {
@@ -22,6 +17,7 @@ interface LeaderboardViewProps {
   onSelectSeason?: (seasonId: string) => void;
   onSelectPlayer: (player: Player) => void;
   highlightedPlayers?: ReadonlyMap<string, LiveScoreNotification>;
+  livePointsByPlayerId?: ReadonlyMap<string, number>;
 }
 
 export type SubTabMode = 'points' | 'ranking' | 'wins' | 'kos';
@@ -34,6 +30,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   onSelectSeason,
   onSelectPlayer,
   highlightedPlayers,
+  livePointsByPlayerId,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<SubTabMode>('points');
   const [localSeasonId, setLocalSeasonId] = useState<string>(
@@ -55,6 +52,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
     }
   };
 
+  const getLivePoints = (playerId: string) => livePointsByPlayerId?.get(playerId) || 0;
+  const getDisplayedPoints = (player: Player) => player.totalPoints + getLivePoints(player.$id);
+
   // Sort Players based on selected sub-tab
   const sortedPlayers = [...players]
     .filter((player) => 
@@ -63,7 +63,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
     )
     .sort((a, b) => {
       if (activeSubTab === 'points' || activeSubTab === 'ranking') {
-        return b.totalPoints - a.totalPoints;
+        return getDisplayedPoints(b) - getDisplayedPoints(a);
       }
       if (activeSubTab === 'wins') {
         return b.careerWins - a.careerWins;
@@ -84,7 +84,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
     }
   };
 
-  const maxPoints = sortedPlayers[0]?.totalPoints || 1;
+  const maxPoints = (sortedPlayers[0] ? getDisplayedPoints(sortedPlayers[0]) : 0) || 1;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12">
@@ -216,7 +216,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                   ? `${sortedPlayers[1].careerWins} Wins`
                   : activeSubTab === 'kos'
                   ? `${sortedPlayers[1].careerKOs} KOs`
-                  : `${sortedPlayers[1].totalPoints.toLocaleString()} pts`}
+                  : `${getDisplayedPoints(sortedPlayers[1]).toLocaleString()} pts`}
               </p>
             </div>
           </div>
@@ -239,7 +239,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                   ? `${sortedPlayers[0].careerWins} Wins`
                   : activeSubTab === 'kos'
                   ? `${sortedPlayers[0].careerKOs} KOs`
-                  : `${sortedPlayers[0].totalPoints.toLocaleString()} pts`}
+                  : `${getDisplayedPoints(sortedPlayers[0]).toLocaleString()} pts`}
               </p>
             </div>
           </div>
@@ -262,7 +262,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                   ? `${sortedPlayers[2].careerWins} Wins`
                   : activeSubTab === 'kos'
                   ? `${sortedPlayers[2].careerKOs} KOs`
-                  : `${sortedPlayers[2].totalPoints.toLocaleString()} pts`}
+                  : `${getDisplayedPoints(sortedPlayers[2]).toLocaleString()} pts`}
               </p>
             </div>
           </div>
@@ -285,7 +285,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
         {sortedPlayers.map((player, index) => {
           const rank = index + 1;
           const suit = getSuitSymbol(player.suitIcon);
-          const percentOfMax = (player.totalPoints / maxPoints) * 100;
+          const livePts = getLivePoints(player.$id);
+          const displayedPts = getDisplayedPoints(player);
+          const percentOfMax = (displayedPts / maxPoints) * 100;
           const highlight = highlightedPlayers?.get(player.$id);
 
           return (
@@ -361,10 +363,16 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                           ? `${player.careerWins} Wins`
                           : activeSubTab === 'kos'
                           ? `${player.careerKOs} KOs`
-                          : `${player.totalPoints.toLocaleString()} pts`}
+                          : `${displayedPts.toLocaleString()} pts`}
                       </div>
                       <div className="text-[10px] text-slate-400 font-medium">
-                        {player.gamesPlayed} games played
+                        {livePts > 0 && activeSubTab !== 'wins' && activeSubTab !== 'kos' ? (
+                          <span className="text-emerald-400 font-semibold">
+                            +{livePts.toLocaleString()} live • {player.gamesPlayed} games
+                          </span>
+                        ) : (
+                          `${player.gamesPlayed} games played`
+                        )}
                       </div>
                     </>
                   )}

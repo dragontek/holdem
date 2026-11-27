@@ -6,6 +6,11 @@ import {
   parseClockAnnouncementPayload,
   type GameClockSnapshot,
 } from '../lib/gameClock';
+import {
+  ENTRY_SCORING_META_ANNOUNCEMENT_TYPE,
+  parseEntryScoringMetaPayload,
+  type EntryScoringMeta,
+} from '../lib/entryScoringMeta';
 
 export type RealtimeCallback = (response: {
   event: string;
@@ -212,6 +217,26 @@ export class AppwriteRealtime {
       const snapshot = parseClockAnnouncementPayload(payload, timestamp);
       if (snapshot) {
         callback(snapshot);
+      }
+    });
+  }
+
+  /**
+   * Subscribe to entry scoring metadata sidecar updates so all devices stay synchronized
+   * on hand bonuses, knockout codes, MUCK status, and Show-Up flags even on legacy schemas.
+   */
+  static subscribeToEntryScoringMeta(callback: (meta: EntryScoringMeta) => void): () => void {
+    const channels = [
+      `tablesdb.${DATABASE_ID}.tables.${APPWRITE_TABLES.ANNOUNCEMENTS}.rows`,
+      `databases.${DATABASE_ID}.collections.${APPWRITE_TABLES.ANNOUNCEMENTS}.documents`,
+    ];
+
+    return subscribeChannels(channels, (event, payload) => {
+      if (event.endsWith('.delete')) return;
+      if (payload.type !== ENTRY_SCORING_META_ANNOUNCEMENT_TYPE) return;
+      const meta = parseEntryScoringMetaPayload(payload);
+      if (meta) {
+        callback(meta);
       }
     });
   }

@@ -211,7 +211,7 @@ export const MULTIPLIER_LABELS: Readonly<Record<PointMultiplier, string>> = {
 };
 
 export interface ScoreLineItem {
-  category: 'attendance' | 'survivor' | 'placement' | 'ko' | 'hand';
+  category: 'attendance' | 'survivor' | 'placement' | 'ko' | 'hand' | 'recorded';
   label: string;
   code?: string;
   basePoints: number;
@@ -450,8 +450,42 @@ export function calculateEntryScore(
     }
   }
 
-  const basePoints = showUpPoints + survivorPoints + placementPoints + koPoints + handBonusPoints;
-  const finalPoints = isMucked ? 0 : basePoints * totalMultiplier;
+  const legacyOffsetPoints = Math.max(0, Math.round(entry.legacyPointsOffset || 0));
+  if (legacyOffsetPoints > 0) {
+    lineItems.push({
+      category: 'recorded',
+      label: 'Prior Recorded Session Points',
+      basePoints: legacyOffsetPoints,
+      finalPoints: legacyOffsetPoints * effectiveMultiplier,
+    });
+  }
+
+  let basePoints =
+    showUpPoints +
+    survivorPoints +
+    placementPoints +
+    koPoints +
+    handBonusPoints +
+    legacyOffsetPoints;
+  let finalPoints = isMucked ? 0 : basePoints * totalMultiplier;
+
+  if (
+    !isMucked &&
+    typeof entry.legacySeedPoints === 'number' &&
+    entry.legacySeedPoints > finalPoints
+  ) {
+    const deltaFinal = entry.legacySeedPoints - finalPoints;
+    const deltaBase =
+      totalMultiplier > 0 ? Math.round(deltaFinal / totalMultiplier) : deltaFinal;
+    lineItems.push({
+      category: 'recorded',
+      label: 'Recorded Session Points',
+      basePoints: deltaBase,
+      finalPoints: deltaFinal,
+    });
+    basePoints += deltaBase;
+    finalPoints = entry.legacySeedPoints;
+  }
 
   return {
     status,
@@ -597,6 +631,32 @@ export function auditKnockouts(entries: GameEntry[]): KnockoutAuditSummary {
     totalKoBadgesRecorded,
     isBalanced: issues.length === 0,
     issues,
+  };
+}
+
+/**
+ * Converts a legacy row's raw `legacySeedPoints` into an explicit `legacyPointsOffset`
+ * right before a Scribe edits the entry, so adding/removing bonuses adjusts cleanly
+ * relative to previously recorded points without losing or locking them.
+ */
+export function snapshotLegacyOffsetBeforeEdit(
+  entry: GameEntry,
+  game: ScoringGameContext
+): GameEntry {
+  if (typeof entry.legacySeedPoints !== 'number' || entry.legacySeedPoints <= 0) {
+    return entry;
+  }
+  const withoutSeed = calculateEntryScore({ ...entry, legacySeedPoints: undefined }, game);
+  const deltaFinal = Math.max(0, entry.legacySeedPoints - withoutSeed.finalPoints);
+  const deltaBase =
+    withoutSeed.totalMultiplier > 0
+      ? Math.round(deltaFinal / withoutSeed.totalMultiplier)
+      : deltaFinal;
+  const nextOffset = Math.max(0, Math.round(entry.legacyPointsOffset || 0)) + deltaBase;
+  return {
+    ...entry,
+    legacyPointsOffset: nextOffset > 0 ? nextOffset : undefined,
+    legacySeedPoints: undefined,
   };
 }
 

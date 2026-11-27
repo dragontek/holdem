@@ -57,6 +57,14 @@ import {
   shouldAcceptIncomingClockAnchor,
   type GameClockSnapshot,
 } from '../lib/gameClock';
+import {
+  ENTRY_SCORING_META_ANNOUNCEMENT_TYPE,
+  buildEntryScoringMeta,
+  getEntryScoringMetaRowId,
+  mergeEntryWithScoringMeta,
+  parseEntryScoringMetaPayload,
+  type EntryScoringMeta,
+} from '../lib/entryScoringMeta';
 import { AppwriteRealtime } from './appwriteRealtime';
 import {
   assertPermission,
@@ -67,7 +75,7 @@ import {
 } from '../lib/permissions';
 
 export const LIVE_SCORE_EVENT_ANNOUNCEMENT_TYPE = 'live_score_event';
-export { GAME_CLOCK_ANNOUNCEMENT_TYPE };
+export { GAME_CLOCK_ANNOUNCEMENT_TYPE, ENTRY_SCORING_META_ANNOUNCEMENT_TYPE };
 
 const SESSION_CACHE_SCOPE = `${APPWRITE_ENDPOINT || 'offline'}__${DATABASE_ID}`;
 const LOCAL_STORAGE_LEAGUES_KEY = 'holdem_leagues';
@@ -983,11 +991,53 @@ export class AppwriteService {
     }
   }
 
+  private static hasNativeEntryScoringColumns(): boolean {
+    const cols = knownTableColumns.get(APPWRITE_TABLES.GAME_ENTRIES);
+    if (!cols) return false;
+    return cols.has('handBonuses') && cols.has('knockouts') && cols.has('status');
+  }
+
+  /**
+   * Persists full Jack Ten Poker entry scoring metadata in a compact sidecar row
+   * (`esc_<entryId>` in `announcements`) whenever the live `game_entries` table lacks
+   * the extended scoring columns, ensuring durability across reloads and real-time sync.
+   */
+  private static async saveEntryScoringMetaSidecar(
+    entryId: string,
+    gameId: string,
+    entry: Partial<GameEntry>
+  ): Promise<boolean> {
+    if (
+      !isAppwriteConfigured ||
+      getMissingTables().has(APPWRITE_TABLES.ANNOUNCEMENTS) ||
+      this.hasNativeEntryScoringColumns()
+    ) {
+      return false;
+    }
+    const rowId = getEntryScoringMetaRowId(entryId);
+    const meta = buildEntryScoringMeta(entryId, gameId, entry);
+    const serialized = JSON.stringify(meta);
+    if (serialized.length > 1950) return false;
+
+    const payload: Record<string, unknown> = {
+      title: gameId.slice(0, 250),
+      content: serialized,
+      type: ENTRY_SCORING_META_ANNOUNCEMENT_TYPE,
+      isActive: false,
+      createdAt: meta.updatedAt,
+    };
+
+    const updated = await resilientUpdateRow(APPWRITE_TABLES.ANNOUNCEMENTS, rowId, payload);
+    if (updated) return true;
+    const createdId = await resilientCreateRow(APPWRITE_TABLES.ANNOUNCEMENTS, rowId, payload);
+    return Boolean(createdId);
+  }
+
   static mapRealtimeGameEntry(doc: Record<string, unknown>): GameEntry {
     return this.mapRawGameEntry(doc);
   }
 
-  private static mapRawGameEntry(doc: any): GameEntry {
+  private static mapRawGameEntry(doc: any, scoringMeta?: EntryScoringMeta | null): GameEntry {
     const knockouts = parseJsonArray<KnockoutCode>(doc.knockouts);
     const handBonuses = parseJsonArray<HandBonusCode>(doc.handBonuses);
     const kosCount = knockouts.length > 0 ? knockouts.length : Number(doc.kosCount || 0);
@@ -1002,8 +1052,12 @@ export class AppwriteService {
       typeof doc.game === 'object' && doc.game
         ? doc.game.$id
         : doc.game || doc.gameId || '';
+    const hasNativeScoringCols =
+      Object.prototype.hasOwnProperty.call(doc, 'handBonuses') ||
+      Object.prototype.hasOwnProperty.call(doc, 'knockouts') ||
+      Object.prototype.hasOwnProperty.call(doc, 'calculatedFinalPoints');
 
-    return {
+    const baseEntry: GameEntry = {
       $id: doc.$id,
       gameId: resolvedGameId,
       playerId: typeof doc.player === 'object' && doc.player ? doc.player.$id : doc.player || doc.playerId || '',
@@ -1031,14 +1085,42 @@ export class AppwriteService {
       calculatedBasePoints: doc.calculatedBasePoints,
       calculatedFinalPoints: doc.calculatedFinalPoints,
       isEliminated,
+      legacySeedPoints:
+        !hasNativeScoringCols &&
+        !scoringMeta &&
+        typeof doc.pointsAwarded === 'number' &&
+        doc.pointsAwarded > 0
+          ? doc.pointsAwarded
+          : undefined,
     };
+
+    return scoringMeta ? mergeEntryWithScoringMeta(baseEntry, scoringMeta) : baseEntry;
   }
 
   static async getAllGameEntries(): Promise<GameEntry[]> {
     if (isAppwriteConfigured) {
-      const items = await resilientListRows(APPWRITE_TABLES.GAME_ENTRIES);
+      const [items, rawAnnouncements] = await Promise.all([
+        resilientListRows(APPWRITE_TABLES.GAME_ENTRIES),
+        resilientListRows(APPWRITE_TABLES.ANNOUNCEMENTS),
+      ]);
       if (!items) return [];
-      return items.map((doc: any) => this.mapRawGameEntry(doc));
+
+      const metaByEntryId = new Map<string, EntryScoringMeta>();
+      if (Array.isArray(rawAnnouncements)) {
+        for (const ann of rawAnnouncements) {
+          const parsed = parseEntryScoringMetaPayload(ann as Record<string, unknown>);
+          if (!parsed) continue;
+          const existing = metaByEntryId.get(parsed.entryId);
+          if (
+            !existing ||
+            new Date(parsed.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()
+          ) {
+            metaByEntryId.set(parsed.entryId, parsed);
+          }
+        }
+      }
+
+      return items.map((doc: any) => this.mapRawGameEntry(doc, metaByEntryId.get(doc.$id)));
     }
 
     const entryOverrides = readOverrides<GameEntry>(LOCAL_STORAGE_ENTRY_OVERRIDES_KEY);
@@ -1361,7 +1443,8 @@ export class AppwriteService {
         .filter(
           (doc: any) =>
             doc.type !== LIVE_SCORE_EVENT_ANNOUNCEMENT_TYPE &&
-            doc.type !== GAME_CLOCK_ANNOUNCEMENT_TYPE
+            doc.type !== GAME_CLOCK_ANNOUNCEMENT_TYPE &&
+            doc.type !== ENTRY_SCORING_META_ANNOUNCEMENT_TYPE
         )
         .map((doc: any) => ({
           $id: doc.$id,
@@ -2610,6 +2693,10 @@ export class AppwriteService {
       const remoteId = await resilientCreateRow(APPWRITE_TABLES.GAME_ENTRIES, newId, payload);
       if (remoteId) newEntry.$id = remoteId;
 
+      if (seatedAfterCutoff || newEntry.hasDgCarryover) {
+        await this.saveEntryScoringMetaSidecar(newEntry.$id, gameId, newEntry);
+      }
+
       await resilientUpdateRow(APPWRITE_TABLES.GAMES, gameId, {
         totalPlayersCount: currentGame.totalPlayersCount + 1,
         remainingPlayersCount: currentGame.remainingPlayersCount + 1,
@@ -2656,7 +2743,10 @@ export class AppwriteService {
     if (updates.calculatedFinalPoints !== undefined) payload.calculatedFinalPoints = updates.calculatedFinalPoints;
     if (updates.pointsAwarded !== undefined) payload.pointsAwarded = updates.pointsAwarded;
 
-    await resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, entryId, payload);
+    await Promise.all([
+      resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, entryId, payload),
+      this.saveEntryScoringMetaSidecar(entryId, updates.gameId || '', updates),
+    ]);
     return true;
   }
 
@@ -2717,6 +2807,8 @@ export class AppwriteService {
       eliminatedBySeat?: number;
       knockedOutByPlayerName?: string;
       isMuck?: boolean;
+      victimEntrySnapshot?: Partial<GameEntry>;
+      killerEntrySnapshot?: Partial<GameEntry>;
     }
   ): Promise<boolean> {
     assertPermission('game:score');
@@ -2763,14 +2855,34 @@ export class AppwriteService {
     }
     try {
       // 1. Mark eliminated player (preserving elimination record even if MUCK)
-      await resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, eliminatedEntryId, {
-        status,
-        isEliminated: true,
-        finishPosition,
-        eliminatedBySeat: options?.eliminatedBySeat || 0,
-        knockedOutByPlayerId: koWinnerPlayerId || '',
-        knockedOutByPlayerName: options?.knockedOutByPlayerName || '',
-      });
+      const victimPoints = options?.victimEntrySnapshot?.pointsAwarded;
+      await Promise.all([
+        resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, eliminatedEntryId, {
+          status,
+          isEliminated: true,
+          finishPosition,
+          ...(victimPoints !== undefined ? { pointsAwarded: victimPoints } : {}),
+          ...(options?.victimEntrySnapshot?.calculatedBasePoints !== undefined
+            ? { calculatedBasePoints: options.victimEntrySnapshot.calculatedBasePoints }
+            : {}),
+          ...(options?.victimEntrySnapshot?.calculatedFinalPoints !== undefined
+            ? { calculatedFinalPoints: options.victimEntrySnapshot.calculatedFinalPoints }
+            : {}),
+          eliminatedBySeat: options?.eliminatedBySeat || 0,
+          knockedOutByPlayerId: koWinnerPlayerId || '',
+          knockedOutByPlayerName: options?.knockedOutByPlayerName || '',
+        }),
+        this.saveEntryScoringMetaSidecar(eliminatedEntryId, gameId, {
+          ...options?.victimEntrySnapshot,
+          gameId,
+          status,
+          isEliminated: true,
+          finishPosition,
+          eliminatedBySeat: options?.eliminatedBySeat,
+          knockedOutByPlayerId: koWinnerPlayerId || undefined,
+          knockedOutByPlayerName: options?.knockedOutByPlayerName,
+        }),
+      ]);
 
       // 2. Decrement remaining players on game
       await resilientUpdateRow(APPWRITE_TABLES.GAMES, gameId, {
@@ -2780,17 +2892,38 @@ export class AppwriteService {
       // 3. Award KO (K or R) to killer if applicable
       if (koWinnerEntryId && koType) {
         try {
-          const entry = await tablesDb.getRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, koWinnerEntryId);
-          const existingKOs = parseJsonArray<KnockoutCode>((entry as any).knockouts);
-          const fallbackKOs: KnockoutCode[] =
-            existingKOs.length > 0
-              ? existingKOs
-              : Array.from({ length: Number((entry as any).kosCount || 0) }, () => 'K' as KnockoutCode);
-          const updatedKOs: KnockoutCode[] = [...fallbackKOs, koType];
-          await resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, koWinnerEntryId, {
-            kosCount: updatedKOs.length,
-            knockouts: JSON.stringify(updatedKOs),
-          });
+          let updatedKOs: KnockoutCode[];
+          if (Array.isArray(options?.killerEntrySnapshot?.knockouts)) {
+            updatedKOs = options.killerEntrySnapshot.knockouts;
+          } else {
+            const entry = await tablesDb.getRow(DATABASE_ID, APPWRITE_TABLES.GAME_ENTRIES, koWinnerEntryId);
+            const existingKOs = parseJsonArray<KnockoutCode>((entry as any).knockouts);
+            const fallbackKOs: KnockoutCode[] =
+              existingKOs.length > 0
+                ? existingKOs
+                : Array.from({ length: Number((entry as any).kosCount || 0) }, () => 'K' as KnockoutCode);
+            updatedKOs = [...fallbackKOs, koType];
+          }
+          const killerPoints = options?.killerEntrySnapshot?.pointsAwarded;
+          await Promise.all([
+            resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, koWinnerEntryId, {
+              kosCount: updatedKOs.length,
+              knockouts: JSON.stringify(updatedKOs),
+              ...(killerPoints !== undefined ? { pointsAwarded: killerPoints } : {}),
+              ...(options?.killerEntrySnapshot?.calculatedBasePoints !== undefined
+                ? { calculatedBasePoints: options.killerEntrySnapshot.calculatedBasePoints }
+                : {}),
+              ...(options?.killerEntrySnapshot?.calculatedFinalPoints !== undefined
+                ? { calculatedFinalPoints: options.killerEntrySnapshot.calculatedFinalPoints }
+                : {}),
+            }),
+            this.saveEntryScoringMetaSidecar(koWinnerEntryId, gameId, {
+              ...options?.killerEntrySnapshot,
+              gameId,
+              knockouts: updatedKOs,
+              kosCount: updatedKOs.length,
+            }),
+          ]);
         } catch { }
       }
 
@@ -2889,18 +3022,33 @@ export class AppwriteService {
       // 2. Update each game entry with official Jack Ten Poker scoring & DG carryover
       for (const res of results) {
         try {
-          await resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, res.entryId, {
-            finishPosition: res.finishPosition,
-            status: res.status,
-            isEliminated: res.finishPosition > 1 || res.status === 'MUCK',
-            earnedDgForNextGame: res.earnedDgForNextGame,
-            calculatedBasePoints: res.basePoints,
-            calculatedFinalPoints: res.finalPoints,
-            pointsAwarded: res.finalPoints,
-            knockouts: JSON.stringify(res.knockouts),
-            kosCount: res.knockouts.length,
-            handBonuses: JSON.stringify(res.handBonuses),
-          });
+          await Promise.all([
+            resilientUpdateRow(APPWRITE_TABLES.GAME_ENTRIES, res.entryId, {
+              finishPosition: res.finishPosition,
+              status: res.status,
+              isEliminated: res.finishPosition > 1 || res.status === 'MUCK',
+              earnedDgForNextGame: res.earnedDgForNextGame,
+              calculatedBasePoints: res.basePoints,
+              calculatedFinalPoints: res.finalPoints,
+              pointsAwarded: res.finalPoints,
+              knockouts: JSON.stringify(res.knockouts),
+              kosCount: res.knockouts.length,
+              handBonuses: JSON.stringify(res.handBonuses),
+            }),
+            this.saveEntryScoringMetaSidecar(res.entryId, gameId, {
+              gameId,
+              finishPosition: res.finishPosition,
+              status: res.status,
+              isEliminated: res.finishPosition > 1 || res.status === 'MUCK',
+              earnedDgForNextGame: res.earnedDgForNextGame,
+              calculatedBasePoints: res.basePoints,
+              calculatedFinalPoints: res.finalPoints,
+              pointsAwarded: res.finalPoints,
+              knockouts: res.knockouts,
+              kosCount: res.knockouts.length,
+              handBonuses: res.handBonuses,
+            }),
+          ]);
 
           // 3. Update player career stats & next-game DG carryover flag
           if (res.playerId) {

@@ -39,10 +39,13 @@ import {
   calculateEntryScore,
   formatBlindInThousands,
   getEntryHandBonuses,
+  getEntryKnockouts,
   getEntryStatus,
+  HAND_BONUS_DEFINITIONS,
   hasReachedShowUpCutoff,
   PLACEMENT_POINTS,
   SHOW_UP_CUTOFF_LEVEL_INDEX,
+  snapshotLegacyOffsetBeforeEdit,
   syncEntryCalculatedFields,
   type FinalizedEntryResult,
 } from '@/lib/scoring';
@@ -185,11 +188,9 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       void Promise.all(
         updatedEntries.map((entry) =>
           AppwriteService.updateGameEntryScoring(entry.$id, {
-            showUpAwarded: entry.showUpAwarded,
-            calculatedBasePoints: entry.calculatedBasePoints,
-            calculatedFinalPoints: entry.calculatedFinalPoints,
-            pointsAwarded: entry.pointsAwarded,
-          })
+            ...entry,
+            gameId: nextGame.$id,
+          }).catch((err) => console.warn('Failed to persist Show Up cutoff score:', err))
         )
       );
     }
@@ -349,10 +350,12 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       player,
       tableNumber,
       seatNumber,
-      activeGame
+      liveGame
     );
 
-    const updatedEntries = [...gameEntries, createdEntry];
+    const updatedEntries = [...gameEntriesRef.current, createdEntry];
+    gameEntriesRef.current = updatedEntries;
+    onRecordLocalEntriesSnapshot?.(activeGame.$id, updatedEntries, createdEntry);
     onEntriesChange(updatedEntries);
 
     const totalPlayersCount = updatedEntries.length;
@@ -428,13 +431,19 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
   const handleUpdateEntryScoring = async (entryId: string, updates: Partial<GameEntry>) => {
     if (!canEditScorecard || activeGame.status === 'completed') return;
-    const target = gameEntries.find((e) => e.$id === entryId);
+    const currentEntries = gameEntriesRef.current;
+    const target = currentEntries.find((e) => e.$id === entryId);
     if (!target) return;
 
-    const synced = syncEntryCalculatedFields({ ...target, ...updates }, activeGame);
-    const updatedEntries = gameEntries.map((e) => (e.$id === entryId ? synced : e));
+    const preparedTarget = snapshotLegacyOffsetBeforeEdit(target, liveGame);
+    const synced = syncEntryCalculatedFields(
+      { ...preparedTarget, ...updates, gameId: activeGame.$id },
+      liveGame
+    );
+    const updatedEntries = currentEntries.map((e) => (e.$id === entryId ? synced : e));
+    gameEntriesRef.current = updatedEntries;
 
-    const events = diffEntryForScoreEvents(target, synced, activeGame, updatedEntries);
+    const events = diffEntryForScoreEvents(target, synced, liveGame, updatedEntries);
     for (const ev of events) {
       onEmitScoreEvent?.(ev);
     }
@@ -444,36 +453,43 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
     const remainingCount = updatedEntries.filter((e) => getEntryStatus(e) === 'ACTIVE').length;
     if (remainingCount !== activeGame.remainingPlayersCount) {
-      onUpdateGame({ ...activeGame, remainingPlayersCount: remainingCount });
+      onUpdateGame({ ...liveGame, remainingPlayersCount: remainingCount });
     }
 
-    await AppwriteService.updateGameEntryScoring(entryId, synced);
+    try {
+      await AppwriteService.updateGameEntryScoring(entryId, synced);
+    } catch (err) {
+      console.warn('Failed to persist entry scoring update:', err);
+    }
   };
 
   const handleConfirmElimination = async (payload: EliminationConfirmPayload) => {
     if (!canEditScorecard || activeGame.status === 'completed') return;
-    const targetEntry = gameEntries.find((e) => e.$id === payload.eliminatedEntryId);
+    const currentEntries = gameEntriesRef.current;
+    const targetEntry = currentEntries.find((e) => e.$id === payload.eliminatedEntryId);
     if (!targetEntry) return;
 
-    const activeCount = gameEntries.filter((e) => getEntryStatus(e) === 'ACTIVE').length;
+    const activeCount = currentEntries.filter((e) => getEntryStatus(e) === 'ACTIVE').length;
     const finishPos = activeCount;
     const koWinnerEntry = payload.koWinnerPlayerId
-      ? gameEntries.find((e) => e.playerId === payload.koWinnerPlayerId)
+      ? currentEntries.find((e) => e.playerId === payload.koWinnerPlayerId)
       : undefined;
 
     const elimNotification = createEliminationNotification({
-      game: activeGame,
+      game: liveGame,
       victim: targetEntry,
       killer: koWinnerEntry,
       koType: payload.koType,
       finishPosition: finishPos,
       isMuck: payload.isMuck,
     });
-    const nextEntriesSnapshot = gameEntries.map((entry) => {
+    const nextEntriesSnapshot = currentEntries.map((entry) => {
       if (entry.$id === targetEntry.$id) {
+        const prepared = snapshotLegacyOffsetBeforeEdit(entry, liveGame);
         return syncEntryCalculatedFields(
           {
-            ...entry,
+            ...prepared,
+            gameId: activeGame.$id,
             status: payload.isMuck ? 'MUCK' : 'ELIMINATED',
             isEliminated: true,
             finishPosition: finishPos,
@@ -481,18 +497,24 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
             knockedOutByPlayerId: koWinnerEntry?.playerId,
             knockedOutByPlayerName: koWinnerEntry?.playerName,
           },
-          activeGame
+          liveGame
         );
       }
       if (koWinnerEntry && payload.koType && entry.$id === koWinnerEntry.$id) {
-        const nextKOs: KnockoutCode[] = [...(entry.knockouts || []), payload.koType];
+        const prepared = snapshotLegacyOffsetBeforeEdit(entry, liveGame);
+        const nextKOs: KnockoutCode[] = [...getEntryKnockouts(prepared), payload.koType];
         return syncEntryCalculatedFields(
-          { ...entry, knockouts: nextKOs, kosCount: nextKOs.length },
-          activeGame
+          { ...prepared, gameId: activeGame.$id, knockouts: nextKOs, kosCount: nextKOs.length },
+          liveGame
         );
       }
       return entry;
     });
+    const syncedVictim = nextEntriesSnapshot.find((e) => e.$id === targetEntry.$id);
+    const syncedKiller = koWinnerEntry
+      ? nextEntriesSnapshot.find((e) => e.$id === koWinnerEntry.$id)
+      : undefined;
+    gameEntriesRef.current = nextEntriesSnapshot;
     onRecordLocalEntriesSnapshot?.(activeGame.$id, nextEntriesSnapshot);
     onEmitScoreEvent?.(elimNotification);
 
@@ -503,20 +525,26 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       payload.isMuck
     );
 
-    await AppwriteService.recordEliminationWithKO(
-      activeGame.$id,
-      targetEntry.$id,
-      finishPos,
-      Math.max(0, activeCount - 1),
-      koWinnerEntry?.$id,
-      payload.koWinnerPlayerId,
-      {
-        koType: payload.koType,
-        eliminatedBySeat: koWinnerEntry?.seatNumber,
-        knockedOutByPlayerName: koWinnerEntry?.playerName,
-        isMuck: payload.isMuck,
-      }
-    );
+    try {
+      await AppwriteService.recordEliminationWithKO(
+        activeGame.$id,
+        targetEntry.$id,
+        finishPos,
+        Math.max(0, activeCount - 1),
+        koWinnerEntry?.$id,
+        payload.koWinnerPlayerId,
+        {
+          koType: payload.koType,
+          eliminatedBySeat: koWinnerEntry?.seatNumber,
+          knockedOutByPlayerName: koWinnerEntry?.playerName,
+          isMuck: payload.isMuck,
+          victimEntrySnapshot: syncedVictim,
+          killerEntrySnapshot: syncedKiller,
+        }
+      );
+    } catch (err) {
+      console.warn('Failed to persist elimination with KO:', err);
+    }
 
     onUpdateGame({
       ...activeGame,
@@ -588,9 +616,9 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
   // Session Points Summary Calculations
   const activeEntries = gameEntries.filter((ge) => !ge.isEliminated);
-  const sessionMultiplier = activeGame.pointMultiplier ?? 1;
+  const sessionMultiplier = liveGame.pointMultiplier ?? 1;
   const totalSessionPointsAwarded = gameEntries.reduce(
-    (sum, ge) => sum + calculateEntryScore(ge, activeGame).finalPoints,
+    (sum, ge) => sum + calculateEntryScore(ge, liveGame).finalPoints,
     0
   );
 
@@ -1048,7 +1076,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                         <span>
                           Pts:{' '}
                           <strong className="text-amber-400 font-mono">
-                            {calculateEntryScore(entry, activeGame).finalPoints.toLocaleString()}
+                            {calculateEntryScore(entry, liveGame).finalPoints.toLocaleString()}
                           </strong>
                         </span>
                         <span>•</span>
@@ -1057,6 +1085,25 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                         <span>Rebuys: <strong className="text-emerald-400">{entry.rebuysCount}</strong></span>
                         <span>•</span>
                         <span>Addons: <strong className="text-indigo-400">{entry.addonsCount}</strong></span>
+                        {getEntryHandBonuses(entry).length > 0 && (
+                          <span className="inline-flex flex-wrap items-center gap-1">
+                            {Array.from(
+                              getEntryHandBonuses(entry).reduce((acc, code) => {
+                                acc.set(code, (acc.get(code) ?? 0) + 1);
+                                return acc;
+                              }, new Map<HandBonusCode, number>())
+                            ).map(([code, count]) => (
+                              <span
+                                key={code}
+                                title={HAND_BONUS_DEFINITIONS[code].label}
+                                className="px-1.5 py-0 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold"
+                              >
+                                {HAND_BONUS_DEFINITIONS[code].symbol}
+                                {count > 1 ? `×${count}` : ''}
+                              </span>
+                            ))}
+                          </span>
+                        )}
                         {entry.hasDgCarryover && (
                           <span className="px-1.5 py-0 rounded bg-indigo-500/20 text-indigo-300 font-bold">
                             DG 2x

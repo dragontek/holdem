@@ -52,7 +52,13 @@ import type {
   League,
   KnockoutCode
 } from './types/holdem';
-import { getEntryKnockouts, syncEntryCalculatedFields, type FinalizedEntryResult } from './lib/scoring';
+import {
+  calculateEntryScore,
+  getEntryKnockouts,
+  snapshotLegacyOffsetBeforeEdit,
+  syncEntryCalculatedFields,
+  type FinalizedEntryResult,
+} from './lib/scoring';
 
 const ACTIVE_LEAGUE_STORAGE_KEY = 'holdem_active_league_id';
 
@@ -640,9 +646,10 @@ export const App: React.FC = () => {
 
     const nextEntries = gameEntries.map((entry) => {
       if (entry.$id === entryId) {
+        const prepared = snapshotLegacyOffsetBeforeEdit(entry, gameContext);
         return syncEntryCalculatedFields(
           {
-            ...entry,
+            ...prepared,
             status: isMuck ? 'MUCK' : 'ELIMINATED',
             isEliminated: true,
             finishPosition: remainingBefore,
@@ -655,10 +662,11 @@ export const App: React.FC = () => {
         );
       }
       if (koByPlayerId && koType && entry.playerId === koByPlayerId) {
-        const nextKOs: KnockoutCode[] = [...getEntryKnockouts(entry), koType];
+        const prepared = snapshotLegacyOffsetBeforeEdit(entry, gameContext);
+        const nextKOs: KnockoutCode[] = [...getEntryKnockouts(prepared), koType];
         return syncEntryCalculatedFields(
           {
-            ...entry,
+            ...prepared,
             knockouts: nextKOs,
             kosCount: nextKOs.length,
           },
@@ -774,6 +782,26 @@ export const App: React.FC = () => {
     (selectedPlayer && players.find((p) => p.$id === selectedPlayer.$id)) ||
     selectedPlayer ||
     players[0];
+
+  // Live unfinalized session points for the currently loaded active game so Leaderboard &
+  // Player Stats immediately reflect in-progress awards before tournament finalization.
+  const livePointsByPlayerId = new Map<string, number>();
+  if (
+    activeGameToDisplay &&
+    activeGameToDisplay.status !== 'completed' &&
+    activeGameToDisplay.status !== 'canceled'
+  ) {
+    for (const entry of gameEntries) {
+      if (entry.gameId !== activeGameToDisplay.$id || !entry.playerId) continue;
+      const pts = calculateEntryScore(entry, activeGameToDisplay).finalPoints;
+      if (pts > 0) {
+        livePointsByPlayerId.set(
+          entry.playerId,
+          (livePointsByPlayerId.get(entry.playerId) || 0) + pts
+        );
+      }
+    }
+  }
 
   // TV View Mode Renders Fullscreen Broadcast Component
   if (currentView === 'tv' && activeGameToDisplay && !isUnknownGame) {
@@ -942,6 +970,7 @@ export const App: React.FC = () => {
                 onSelectSeason={(nextSeasonId) => handleSelectSeason(nextSeasonId)}
                 onSelectPlayer={handleSelectPlayer}
                 highlightedPlayers={highlightedPlayers}
+                livePointsByPlayerId={livePointsByPlayerId}
               />
             )}
 
@@ -950,7 +979,7 @@ export const App: React.FC = () => {
                 player={resolvedPlayer}
                 allPlayers={players}
                 recentEntries={gameEntries}
-                games={scopedGames}
+                games={games}
                 onBack={handleGoBack}
                 backLabel={backLabel}
               />

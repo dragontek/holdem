@@ -51,6 +51,39 @@ function normalizeViewName(segment: string): AppViewMode {
 }
 
 /**
+ * Returns the deployment base path without trailing slash (e.g. '' for root '/' or '/holdem'
+ * when hosted on GitHub Pages at /holdem/).
+ */
+export function getAppBasePath(): string {
+  const raw =
+    typeof import.meta !== 'undefined' &&
+    import.meta.env &&
+    typeof import.meta.env.BASE_URL === 'string'
+      ? import.meta.env.BASE_URL
+      : '/';
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (!trimmed || trimmed === '.') return '';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+function stripBasePath(pathname: string): string {
+  const base = getAppBasePath();
+  if (!base) return pathname;
+  if (pathname === base) return '/';
+  if (pathname.startsWith(`${base}/`)) {
+    return pathname.slice(base.length);
+  }
+  return pathname;
+}
+
+function withBasePath(appPath: string): string {
+  const base = getAppBasePath();
+  if (!base) return appPath;
+  if (appPath === '/') return `${base}/`;
+  return `${base}${appPath.startsWith('/') ? appPath : `/${appPath}`}`;
+}
+
+/**
  * Parses clean prefix-first hierarchical URLs (league is stored in session/localStorage):
  *   /                                      -> Home / active league games
  *   /games                                 -> Active league games
@@ -66,7 +99,8 @@ function normalizeViewName(segment: string): AppViewMode {
  * Also gracefully accepts legacy #hash links and old /:leagueId/... paths.
  */
 export function parseAppRoute(pathname: string, hash: string = ''): AppRoute {
-  const segments = pathname
+  const relativePathname = stripBasePath(pathname);
+  const segments = relativePathname
     .split('/')
     .map((s) => s.trim())
     .filter(Boolean)
@@ -154,37 +188,41 @@ export function parseAppRoute(pathname: string, hash: string = ''): AppRoute {
  */
 export function buildAppPath(route: AppRoute): string {
   if (route.view === 'games') {
-    return route.seasonId ? `/games/${encodeURIComponent(route.seasonId)}` : '/';
+    return withBasePath(route.seasonId ? `/games/${encodeURIComponent(route.seasonId)}` : '/');
   }
 
   if (route.view === 'director') {
     if (route.seasonId && route.gameId) {
-      return `/games/${encodeURIComponent(route.seasonId)}/${encodeURIComponent(route.gameId)}`;
+      return withBasePath(
+        `/games/${encodeURIComponent(route.seasonId)}/${encodeURIComponent(route.gameId)}`
+      );
     }
     if (route.gameId) {
-      return `/games/${encodeURIComponent(route.gameId)}`;
+      return withBasePath(`/games/${encodeURIComponent(route.gameId)}`);
     }
-    return route.seasonId ? `/games/${encodeURIComponent(route.seasonId)}` : '/';
+    return withBasePath(route.seasonId ? `/games/${encodeURIComponent(route.seasonId)}` : '/');
   }
 
   if (route.view === 'tv') {
     if (route.seasonId && route.gameId) {
-      return `/games/${encodeURIComponent(route.seasonId)}/${encodeURIComponent(route.gameId)}/tv`;
+      return withBasePath(
+        `/games/${encodeURIComponent(route.seasonId)}/${encodeURIComponent(route.gameId)}/tv`
+      );
     }
     if (route.gameId) {
-      return `/tv/${encodeURIComponent(route.gameId)}`;
+      return withBasePath(`/tv/${encodeURIComponent(route.gameId)}`);
     }
-    return '/tv';
+    return withBasePath('/tv');
   }
 
   if (route.view === 'stats') {
-    return route.playerId ? `/stats/${encodeURIComponent(route.playerId)}` : '/stats';
+    return withBasePath(route.playerId ? `/stats/${encodeURIComponent(route.playerId)}` : '/stats');
   }
 
   // admin, leaderboard, info, gallery: /<view>[/:seasonId]
-  return route.seasonId
-    ? `/${route.view}/${encodeURIComponent(route.seasonId)}`
-    : `/${route.view}`;
+  return withBasePath(
+    route.seasonId ? `/${route.view}/${encodeURIComponent(route.seasonId)}` : `/${route.view}`
+  );
 }
 
 export function resolveSeasonLeagueId(

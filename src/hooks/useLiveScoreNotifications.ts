@@ -13,6 +13,11 @@ import {
   shouldAcceptIncomingClockAnchor,
   type GameClockSnapshot,
 } from '@/lib/gameClock';
+import {
+  mergeEntryWithScoringMeta,
+  mergeRealtimeGameEntry,
+  type EntryScoringMeta,
+} from '@/lib/entryScoringMeta';
 
 const DEDUPE_WINDOW_MS = 8000;
 const CANONICAL_SUPPRESS_WINDOW_MS = 3500;
@@ -73,6 +78,7 @@ export function useLiveScoreNotifications({
   const recentCanonicalAtRef = useRef<Map<string, number>>(new Map());
   const recentKillerKoAtRef = useRef<Map<string, number>>(new Map());
   const lastServerClockAnchorRef = useRef<Map<string, string>>(new Map());
+  const lastScoringMetaAtRef = useRef<Map<string, number>>(new Map());
   const pendingFallbackTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const deferredToastsRef = useRef<LiveScoreNotification[]>([]);
   const highlightTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -301,6 +307,7 @@ export function useLiveScoreNotifications({
       }
       entriesByGameRef.current.set(gameId, bucket);
       if (broadcastChangedEntry) {
+        lastScoringMetaAtRef.current.set(broadcastChangedEntry.$id, Date.now());
         AppwriteRealtime.broadcastEntrySnapshot(
           gameId,
           broadcastChangedEntry as unknown as Record<string, unknown>
@@ -354,14 +361,10 @@ export function useLiveScoreNotifications({
         entriesByGameRef.current.set(gameId, bucket);
       }
       const prevEntry = bucket.get(mapped.$id);
-      // Preserve player identity fields if Appwrite Realtime omitted unexpanded relationship columns
-      const normalizedEntry: GameEntry = {
-        ...mapped,
-        gameId,
-        playerId: mapped.playerId || prevEntry?.playerId || '',
-        playerName: mapped.playerName || prevEntry?.playerName || '',
-        playerSuitIcon: mapped.playerSuitIcon || prevEntry?.playerSuitIcon || 'spades',
-      };
+      // Merge incoming Realtime payload with prior snapshot so legacy schemas lacking
+      // extended columns (`handBonuses`, `knockouts`, `status`, `showUpAwarded`, etc.)
+      // never overwrite locally-recorded or sidecar-synced scoring fields.
+      const normalizedEntry = mergeRealtimeGameEntry(rawPayload, mapped, prevEntry, gameId);
       bucket.set(normalizedEntry.$id, normalizedEntry);
 
       const allForGame = Array.from(bucket.values());
@@ -440,8 +443,34 @@ export function useLiveScoreNotifications({
       onRemoteGameRef.current?.(clock.gameId, patch);
     };
 
+    const handleIncomingScoringMeta = (meta: EntryScoringMeta) => {
+      const gameId = meta.gameId || entryIdToGameIdRef.current.get(meta.entryId) || '';
+      if (!gameId || !meta.entryId) return;
+      const incomingTs = Date.parse(meta.updatedAt);
+      const lastTs = lastScoringMetaAtRef.current.get(meta.entryId) ?? 0;
+      if (Number.isFinite(incomingTs) && lastTs > 0 && incomingTs < lastTs - 250) {
+        return;
+      }
+      if (Number.isFinite(incomingTs)) {
+        lastScoringMetaAtRef.current.set(meta.entryId, Math.max(lastTs, incomingTs));
+      }
+      const bucket = entriesByGameRef.current.get(gameId);
+      if (!bucket) return;
+      const prevEntry = bucket.get(meta.entryId);
+      if (!prevEntry) return;
+
+      const merged = mergeEntryWithScoringMeta(prevEntry, meta);
+      bucket.set(merged.$id, merged);
+      const allForGame = Array.from(bucket.values());
+      onRemoteEntryRef.current?.(gameId, merged, allForGame);
+    };
+
     const unsubClockState = AppwriteRealtime.subscribeToClockState((clock) => {
       applyClockSnapshot(clock);
+    });
+
+    const unsubScoringMeta = AppwriteRealtime.subscribeToEntryScoringMeta((meta) => {
+      handleIncomingScoringMeta(meta);
     });
 
     const unsubScoreEvents = AppwriteRealtime.subscribeToScoreEvents((notification) => {
@@ -519,6 +548,7 @@ export function useLiveScoreNotifications({
     const fallbackTimers = pendingFallbackTimersRef.current;
     return () => {
       unsubClockState();
+      unsubScoringMeta();
       unsubScoreEvents();
       unsubEntries();
       unsubGames();

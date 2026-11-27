@@ -197,6 +197,16 @@ export interface GameEntry {
   eliminatedAt?: string;
   calculatedBasePoints?: number;
   calculatedFinalPoints?: number;
+  /**
+   * Unitemized base points preserved from legacy game_entries rows that lacked
+   * handBonuses/knockouts columns prior to the first digital scorecard edit.
+   */
+  legacyPointsOffset?: number;
+  /**
+   * Raw persisted pointsAwarded from an untouched legacy game_entries row
+   * (no native handBonuses column and no entry_scoring_meta sidecar yet).
+   */
+  legacySeedPoints?: number;
 }
 
 export interface HotHandJackpot {

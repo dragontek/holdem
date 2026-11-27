@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { Game, GameEntry, Player } from '../types/holdem';
 import { isAppwriteConfigured } from '@/lib/appwrite';
 import { AppwriteService } from '@/services/appwriteService';
-import { calculateEntryScore } from '@/lib/scoring';
+import { calculateEntryScore, getEntryHandBonuses } from '@/lib/scoring';
 import { 
   ArrowLeft, 
   Calendar,
@@ -57,18 +57,27 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
   }
 
   const livePlayerEntries = Array.from(mergedEntriesMap.values()).map((entry) => {
-    const game = games.find((g) => g.$id === entry.gameId) || {
+    const matchedGame = games.find((g) => g.$id === entry.gameId);
+    const game = matchedGame || {
       title: 'Tournament Session',
       venueName: 'League Venue',
       scheduledAt: '',
+      status: 'running' as const,
       pointMultiplier: 1 as const,
       isDayGame: false,
       noGamePlayed: false,
     };
     const breakdown = calculateEntryScore(entry, game);
+    const isLiveUnfinalized = game.status !== 'completed' && game.status !== 'canceled';
+    const highHandCount = getEntryHandBonuses(entry).filter(
+      (b) => b === '4' || b === 'F' || b === '#'
+    ).length;
+
     return {
       date: game.scheduledAt ? `${game.title} (${game.scheduledAt})` : game.title,
       venue: game.venueName,
+      isLiveUnfinalized,
+      highHandCount,
       multiplierLabel: breakdown.isMucked
         ? 'MUCK (0x)'
         : `${breakdown.totalMultiplier}x (${breakdown.sessionMultiplier}x${
@@ -82,6 +91,16 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
       totalPoints: breakdown.finalPoints,
     };
   });
+
+  // Live points earned in active/unfinalized sessions (absorbed into player.totalPoints upon finalization)
+  const liveUnfinalizedPoints = livePlayerEntries
+    .filter((item) => item.isLiveUnfinalized)
+    .reduce((sum, item) => sum + item.totalPoints, 0);
+  const liveUnfinalizedHighHands = livePlayerEntries
+    .filter((item) => item.isLiveUnfinalized)
+    .reduce((sum, item) => sum + item.highHandCount, 0);
+  const displayedTotalPoints = player.totalPoints + liveUnfinalizedPoints;
+  const displayedHighHands = (player.highHandBadges || 0) + liveUnfinalizedHighHands;
 
   // Historical sample game breakdown (offline demo mode only)
   const mockHistoryBreakdown = [
@@ -172,10 +191,10 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
 
           {/* Quick Metrics Badges */}
           <div className="flex items-center gap-3">
-            {player.highHandBadges && player.highHandBadges > 0 && (
+            {displayedHighHands > 0 && (
               <div className="bg-amber-500/10 border border-amber-500/30 px-3.5 py-2 rounded-xl text-center">
                 <div className="text-xs text-amber-400 font-bold flex items-center gap-1 justify-center">
-                  <Sparkles className="w-3.5 h-3.5" /> {player.highHandBadges}
+                  <Sparkles className="w-3.5 h-3.5" /> {displayedHighHands}
                 </div>
                 <div className="text-[10px] text-slate-400 uppercase font-semibold">High Hands</div>
               </div>
@@ -195,9 +214,17 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
         <div className="glass-card rounded-xl p-4 border border-slate-800 text-center">
           <div className="text-[10px] uppercase font-semibold text-slate-400">Total Points</div>
           <div className="text-2xl font-black text-amber-400 mt-1">
-            {player.totalPoints.toLocaleString()}
+            {displayedTotalPoints.toLocaleString()}
           </div>
-          <div className="text-[10px] text-slate-500 mt-1">Season Standings</div>
+          <div className="text-[10px] text-slate-500 mt-1">
+            {liveUnfinalizedPoints > 0 ? (
+              <span className="text-emerald-400 font-semibold">
+                Includes +{liveUnfinalizedPoints.toLocaleString()} live pts
+              </span>
+            ) : (
+              'Season Standings'
+            )}
+          </div>
         </div>
 
         <div className="glass-card rounded-xl p-4 border border-slate-800 text-center">
@@ -244,7 +271,14 @@ export const PlayerStatsView: React.FC<PlayerStatsViewProps> = ({
           {historyBreakdown.map((item, idx) => (
             <div key={idx} className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs border-b border-slate-800 pb-2">
-                <span className="text-slate-400 font-medium">{item.date}</span>
+                <div className="flex items-center gap-2">
+                  {'isLiveUnfinalized' in item && Boolean(item.isLiveUnfinalized) && (
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                      LIVE
+                    </span>
+                  )}
+                  <span className="text-slate-400 font-medium">{item.date}</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-mono text-[11px] font-bold">
                     {item.multiplierLabel}

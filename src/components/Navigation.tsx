@@ -39,6 +39,7 @@ export type ViewMode =
 export interface NavigationProps {
   currentView: ViewMode;
   onSelectView: (view: ViewMode) => void;
+  onGoHome?: () => void;
   onOpenQR: () => void;
   onOpenAppwriteSetup: () => void;
   onOpenAuth: () => void;
@@ -68,6 +69,7 @@ function getRoleIcon(role: UserRole) {
 export const Navigation: React.FC<NavigationProps> = ({
   currentView,
   onSelectView,
+  onGoHome,
   onOpenQR,
   onOpenAppwriteSetup,
   onOpenAuth,
@@ -79,7 +81,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 }) => {
   const userRole = currentUser?.role || 'player';
   const canAccessAdmin = AuthService.canAccessAdmin(userRole);
-  const activeLeague = leagues.find((l) => l.$id === activeLeagueId) || leagues[0];
+  const activeLeague = leagues.find((l) => l.$id === activeLeagueId) || leagues[0] || null;
 
   const navItems: {
     id: ViewMode;
@@ -140,18 +142,18 @@ export const Navigation: React.FC<NavigationProps> = ({
           <div className="flex items-center gap-2.5 min-w-0">
             <button
               type="button"
-              onClick={() => onSelectView('games')}
+              onClick={() => (onGoHome ? onGoHome() : onSelectView('games'))}
               className="flex items-center gap-2.5 min-w-0 rounded-xl py-1 pr-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
             >
               <span className="w-8 h-8 rounded-xl felt-gradient flex items-center justify-center border border-emerald-500/40 shrink-0">
                 <span className="text-base font-black text-amber-400">♠</span>
               </span>
               <span className="min-w-0">
-                <span className="block text-sm font-extrabold tracking-tight text-white leading-tight truncate">
-                  Hold&apos;em Pro
+                <span className="block text-sm font-extrabold tracking-tight text-white leading-tight truncate max-w-[160px] sm:max-w-[220px]">
+                  {activeLeague ? activeLeague.name : 'Jack Ten Poker'}
                 </span>
                 <span className="block text-[11px] text-slate-400 leading-tight truncate max-w-[140px] sm:max-w-[200px]">
-                  {activeLeague ? activeLeague.name : seasonName}
+                  {activeLeague ? seasonName : 'All Leagues • Home'}
                 </span>
               </span>
             </button>
@@ -289,7 +291,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                     <span>{currentUser ? 'Account & Switch Role' : 'Sign In / Register'}</span>
                   </DropdownMenu.Item>
 
-                  {/* League Switcher */}
+                  {/* League Switcher (Session-persisted in localStorage) */}
                   {leagues.length > 0 && (
                     <>
                       <DropdownMenu.Separator className="h-px bg-slate-800 my-1" />
@@ -297,7 +299,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                         Active League
                       </DropdownMenu.Label>
                       {leagues.map((league) => {
-                        const isSelected = league.$id === activeLeagueId;
+                        const isSelected = league.$id === (activeLeague?.$id || activeLeagueId);
                         return (
                           <DropdownMenu.Item
                             key={league.$id}

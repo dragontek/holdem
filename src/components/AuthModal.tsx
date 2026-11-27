@@ -1,23 +1,34 @@
 import React, { useState } from 'react';
-import type { UserProfile, UserRole } from '../types/holdem';
-import { AuthService, DEMO_USERS } from '../services/authService';
-import { 
-  ShieldCheck, 
-  LogIn, 
-  UserPlus, 
-  LogOut, 
-  X, 
-  KeyRound, 
-  Mail, 
-  User, 
+import type { UserProfile, UserRole } from '@/types/holdem';
+import { AuthService } from '@/services/authService';
+import { AccountProfilePanel } from '@/components/auth/AccountProfilePanel';
+import { OAuthProvidersBar } from '@/components/auth/OAuthProvidersBar';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
   AlertCircle,
-  Crown,
   Briefcase,
-  PenTool,
-  Gamepad2
+  Crown,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LogIn,
+  Mail,
+  ShieldCheck,
+  User,
+  UserPlus,
 } from 'lucide-react';
 
-interface AuthModalProps {
+export interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserProfile | null;
@@ -32,66 +43,86 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 }) => {
   const [tab, setTab] = useState<'login' | 'register'>('login');
 
-  // Login form state
-  const [loginEmail, setLoginEmail] = useState('');
+  // Sign In form state
+  const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
-  // Register form state
-  const [regName, setRegName] = useState('');
+  // Sign Up form state
+  const [regUsername, setRegUsername] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
-  const [regRole, setRegRole] = useState<UserRole>('player');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  if (!isOpen) return null;
+  const resetForms = () => {
+    setLoginPassword('');
+    setRegPassword('');
+    setRegConfirmPassword('');
+    setErrorMsg('');
+  };
+
+  const handleClose = () => {
+    resetForms();
+    onClose();
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setErrorMsg('');
 
-    const res = await AuthService.login(loginEmail, loginPassword);
+    const res = await AuthService.login(loginIdentifier, loginPassword);
     setIsLoading(false);
 
     if (res.user) {
       onUserChange(res.user);
-      onClose();
+      handleClose();
     } else {
-      setErrorMsg(res.error || 'Login failed. Check your email and password.');
+      setErrorMsg(res.error || 'Sign in failed. Check your username/email and password.');
     }
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim()) {
-      setErrorMsg('Full Name is required');
+    if (regUsername.trim().length < 3) {
+      setErrorMsg('Username must be at least 3 characters.');
       return;
     }
     if (regPassword.length < 8) {
-      setErrorMsg('Password must be at least 8 characters');
+      setErrorMsg('Password must be at least 8 characters.');
+      return;
+    }
+    if (regPassword !== regConfirmPassword) {
+      setErrorMsg('Passwords do not match.');
       return;
     }
 
     setIsLoading(true);
     setErrorMsg('');
 
-    const res = await AuthService.register(regName.trim(), regEmail.trim(), regPassword, regRole);
+    const res = await AuthService.register({
+      username: regUsername.trim(),
+      email: regEmail.trim() || undefined,
+      password: regPassword,
+    });
     setIsLoading(false);
 
     if (res.user) {
       onUserChange(res.user);
-      onClose();
+      handleClose();
     } else {
-      setErrorMsg(res.error || 'Registration failed');
+      setErrorMsg(res.error || 'Unable to create account.');
     }
   };
 
   const handleDemoSwitch = (role: UserRole) => {
     const user = AuthService.switchDemoRole(role);
     onUserChange(user);
-    onClose();
+    handleClose();
   };
 
   const handleLogout = async () => {
@@ -99,358 +130,245 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     await AuthService.logout();
     setIsLoading(false);
     onUserChange(null);
-    onClose();
-  };
-
-  const getRoleBadge = (role: UserRole) => {
-    switch (role) {
-      case 'admin':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> Platform Admin
-          </span>
-        );
-      case 'manager':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-            <Crown className="w-3.5 h-3.5 text-amber-400" /> Manager (Admin)
-          </span>
-        );
-      case 'dealer':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
-            <Briefcase className="w-3.5 h-3.5 text-emerald-400" /> Dealer
-          </span>
-        );
-      case 'scribe':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 flex items-center gap-1">
-            <PenTool className="w-3.5 h-3.5 text-indigo-400" /> Scribe
-          </span>
-        );
-      case 'player':
-      default:
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
-            <Gamepad2 className="w-3.5 h-3.5 text-slate-400" /> Player
-          </span>
-        );
-    }
+    handleClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
-      <div className="glass-panel w-full max-w-md rounded-3xl border border-emerald-500/40 p-6 shadow-2xl relative felt-glow max-h-[92vh] flex flex-col">
-        
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-all"
-        >
-          <X className="w-5 h-5" />
-        </button>
-
-        {/* Modal Header */}
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-12 h-12 rounded-2xl felt-gradient border border-emerald-500/50 flex items-center justify-center text-amber-400 shadow-md shrink-0">
-            <ShieldCheck className="w-6 h-6" />
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
+      <DialogContent className="max-w-md max-h-[92dvh] overflow-y-auto bg-slate-950 border-slate-800 p-6">
+        <DialogHeader className="text-left pb-2 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <DialogTitle className="text-lg font-bold text-white">
+                {currentUser ? 'Player Account' : 'Sign In to Hold\u2019em Pro'}
+              </DialogTitle>
+              <DialogDescription className="text-xs text-slate-400">
+                {currentUser
+                  ? 'Manage your active session and role'
+                  : 'RSVP for games and track your league points'}
+              </DialogDescription>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              Hold&apos;em Pro <span className="gold-gradient-text">Identity</span>
-            </h2>
-            <p className="text-xs text-slate-400">Account login, registration &amp; role security</p>
-          </div>
-        </div>
+        </DialogHeader>
 
-        {/* If Logged In: Show Profile Card */}
         {currentUser ? (
-          <div className="space-y-4 py-3 flex-1 overflow-y-auto">
-            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-bold text-white">{currentUser.name}</h3>
-                  <p className="text-xs text-slate-400">{currentUser.email}</p>
-                </div>
-                {getRoleBadge(currentUser.role)}
-              </div>
-
-              <div className="text-xs text-slate-300 pt-2 border-t border-slate-800/80">
-                {currentUser.role === 'admin' && (
-                  <p className="text-rose-400/90">
-                    Platform Administrator: Create leagues, assign designated League Managers, and oversee all league operations.
-                  </p>
-                )}
-                {currentUser.role === 'manager' && (
-                  <p className="text-amber-400/90">
-                    Full Manager Privileges: Admin section, Venue CRUD, Tournament creation, Clock &amp; Payouts.
-                  </p>
-                )}
-                {currentUser.role === 'dealer' && (
-                  <p className="text-emerald-400/90">
-                    Dealer Privileges: Active tournament clocks, Table Dealing, Rebuys, Add-ons &amp; Bust-outs.
-                  </p>
-                )}
-                {currentUser.role === 'scribe' && (
-                  <p className="text-indigo-400/90">
-                    Scribe Privileges: Seating check-in, Bust-outs, Knockouts &amp; Points tracking.
-                  </p>
-                )}
-                {currentUser.role === 'player' && (
-                  <p className="text-slate-400">
-                    Player Membership: Live leaderboard, tournament schedules &amp; player statistics.
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Quick Demo Switcher */}
-            <div className="space-y-2 pt-2">
-              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block">
-                Quick Role Switcher (Testing):
-              </span>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                <button
-                  onClick={() => handleDemoSwitch('admin')}
-                  className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold text-left flex items-center gap-1.5"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" /> Super Admin
-                </button>
-                <button
-                  onClick={() => handleDemoSwitch('manager')}
-                  className="p-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold text-left flex items-center gap-1.5"
-                >
-                  <Crown className="w-3.5 h-3.5" /> Manager
-                </button>
-                <button
-                  onClick={() => handleDemoSwitch('dealer')}
-                  className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold text-left flex items-center gap-1.5"
-                >
-                  <Briefcase className="w-3.5 h-3.5" /> Dealer
-                </button>
-                <button
-                  onClick={() => handleDemoSwitch('scribe')}
-                  className="p-2 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-bold text-left flex items-center gap-1.5"
-                >
-                  <PenTool className="w-3.5 h-3.5" /> Scribe
-                </button>
-                <button
-                  onClick={() => handleDemoSwitch('player')}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-bold text-left flex items-center gap-1.5"
-                >
-                  <Gamepad2 className="w-3.5 h-3.5" /> Player
-                </button>
-              </div>
-            </div>
-
-            <button
-              onClick={handleLogout}
-              disabled={isLoading}
-              className="w-full py-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-semibold border border-rose-500/40 flex items-center justify-center gap-2 transition-all mt-4"
-            >
-              <LogOut className="w-4 h-4" /> Sign Out
-            </button>
-          </div>
+          <AccountProfilePanel
+            currentUser={currentUser}
+            isLoading={isLoading}
+            onDemoSwitch={handleDemoSwitch}
+            onLogout={handleLogout}
+          />
         ) : (
-          /* Authentication Forms */
-          <div className="flex-1 overflow-y-auto space-y-4">
-            {/* Tab Selector */}
-            <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  setTab('login');
-                  setErrorMsg('');
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                  tab === 'login' ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTab('register');
-                  setErrorMsg('');
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                  tab === 'register' ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Create Account
-              </button>
-            </div>
+          <div className="space-y-4">
+            <Tabs
+              value={tab}
+              onValueChange={(v) => {
+                setTab(v as 'login' | 'register');
+                setErrorMsg('');
+              }}
+            >
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="login">Sign In</TabsTrigger>
+                <TabsTrigger value="register">Sign Up</TabsTrigger>
+              </TabsList>
 
-            {errorMsg && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{errorMsg}</span>
-              </div>
-            )}
-
-            {tab === 'login' ? (
-              <form onSubmit={handleLogin} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                    Email Address
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none transition-all"
-                      placeholder="manager@holdempro.com"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="password"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none transition-all"
-                      placeholder="••••••••"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50"
+              {errorMsg && (
+                <div
+                  role="alert"
+                  className="mt-3 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-start gap-2"
                 >
-                  <LogIn className="w-4 h-4" /> {isLoading ? 'Authenticating...' : 'Sign In'}
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleRegister} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                    Full Name *
-                  </label>
-                  <div className="relative">
-                    <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:outline-none transition-all"
-                      placeholder="e.g. Doyle Brunson"
-                      required
-                    />
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              {/* Sign In Form */}
+              <TabsContent value="login" className="mt-4">
+                <form onSubmit={handleLogin} className="space-y-3.5">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="login-identifier">Username or Email</Label>
+                    <div className="relative">
+                      <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Input
+                        id="login-identifier"
+                        type="text"
+                        autoComplete="username"
+                        value={loginIdentifier}
+                        onChange={(e) => setLoginIdentifier(e.target.value)}
+                        placeholder="e.g. Chip4295 or you@example.com"
+                        className="pl-9 h-11"
+                        required
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                    Email Address *
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:outline-none transition-all"
-                      placeholder="doyle@example.com"
-                      required
-                    />
+                  <div className="space-y-1.5">
+                    <Label htmlFor="login-password">Password</Label>
+                    <div className="relative">
+                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Input
+                        id="login-password"
+                        type={showLoginPassword ? 'text' : 'password'}
+                        autoComplete="current-password"
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder="Enter your password"
+                        className="pl-9 pr-10 h-11"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowLoginPassword((s) => !s)}
+                        aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white"
+                      >
+                        {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                    Password (Min 8 chars) *
-                  </label>
-                  <div className="relative">
-                    <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="password"
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:outline-none transition-all"
-                      placeholder="••••••••"
-                      minLength={8}
-                      required
-                    />
+                  <Button type="submit" disabled={isLoading} className="w-full h-11 font-bold">
+                    <LogIn className="w-4 h-4" />
+                    {isLoading ? 'Signing In...' : 'Sign In'}
+                  </Button>
+                </form>
+              </TabsContent>
+
+              {/* Sign Up Form */}
+              <TabsContent value="register" className="mt-4">
+                <form onSubmit={handleRegister} className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-username">Username / Player Handle *</Label>
+                    <div className="relative">
+                      <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Input
+                        id="reg-username"
+                        type="text"
+                        autoComplete="username"
+                        value={regUsername}
+                        onChange={(e) => setRegUsername(e.target.value)}
+                        placeholder="e.g. Chip4295"
+                        className="pl-9 h-11"
+                        minLength={3}
+                        required
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                    System Role
-                  </label>
-                  <select
-                    value={regRole}
-                    onChange={(e) => setRegRole(e.target.value as UserRole)}
-                    className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2 text-sm text-white focus:outline-none font-semibold"
-                  >
-                    <option value="player">Player (League Member)</option>
-                    <option value="scribe">Scribe (Check-in &amp; Bust-outs)</option>
-                    <option value="dealer">Dealer (Live Clock &amp; Tables)</option>
-                    <option value="manager">Manager (League Admin)</option>
-                    <option value="admin">Admin (Platform Super Administrator)</option>
-                  </select>
-                </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-email">
+                      Email Address <span className="text-slate-500 font-normal">(Optional)</span>
+                    </Label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Input
+                        id="reg-email"
+                        type="email"
+                        autoComplete="email"
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        placeholder="For account recovery & Google/Apple linking"
+                        className="pl-9 h-11"
+                      />
+                    </div>
+                  </div>
 
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50"
-                >
-                  <UserPlus className="w-4 h-4" /> {isLoading ? 'Creating Account...' : 'Register'}
-                </button>
-              </form>
-            )}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-password">Password (Min 8 chars) *</Label>
+                    <div className="relative">
+                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Input
+                        id="reg-password"
+                        type={showRegPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        placeholder="Create a password"
+                        className="pl-9 pr-10 h-11"
+                        minLength={8}
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegPassword((s) => !s)}
+                        aria-label={showRegPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white"
+                      >
+                        {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
 
-            {/* Quick Demo Logins Divider */}
-            <div className="pt-2">
-              <div className="relative my-3 text-center">
-                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800" /></div>
-                <span className="relative px-3 bg-slate-900 text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">
-                  Quick Demo Access
-                </span>
-              </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-confirm-password">Confirm Password *</Label>
+                    <div className="relative">
+                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Input
+                        id="reg-confirm-password"
+                        type={showRegPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
+                        value={regConfirmPassword}
+                        onChange={(e) => setRegConfirmPassword(e.target.value)}
+                        placeholder="Re-enter your password"
+                        className="pl-9 h-11"
+                        minLength={8}
+                        required
+                      />
+                    </div>
+                  </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <button
+                  <Button type="submit" disabled={isLoading} className="w-full h-11 font-bold">
+                    <UserPlus className="w-4 h-4" />
+                    {isLoading ? 'Creating Account...' : 'Create Player Account'}
+                  </Button>
+                </form>
+              </TabsContent>
+            </Tabs>
+
+            {/* Future Google & Apple Sign-In (wired to Appwrite OAuth2) */}
+            <OAuthProvidersBar onError={setErrorMsg} />
+
+            {/* Subtle Demo Role Testing Switcher */}
+            <details className="rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
+              <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wider text-slate-500 select-none">
+                Demo Staff Quick Access
+              </summary>
+              <div className="grid grid-cols-3 gap-2 pt-3">
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => handleDemoSwitch('admin')}
-                  className="p-2 rounded-xl glass-card text-rose-300 hover:bg-slate-800 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                  className="h-9 text-xs"
                 >
-                  <ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> Demo Admin
-                </button>
-                <button
+                  <ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> Admin
+                </Button>
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => handleDemoSwitch('manager')}
-                  className="p-2 rounded-xl glass-card text-amber-300 hover:bg-slate-800 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                  className="h-9 text-xs"
                 >
-                  <Crown className="w-3.5 h-3.5 text-amber-400" /> Demo Manager
-                </button>
-                <button
+                  <Crown className="w-3.5 h-3.5 text-amber-400" /> Manager
+                </Button>
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => handleDemoSwitch('dealer')}
-                  className="p-2 rounded-xl glass-card text-emerald-300 hover:bg-slate-800 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                  className="h-9 text-xs"
                 >
-                  <Briefcase className="w-3.5 h-3.5 text-emerald-400" /> Demo Dealer
-                </button>
+                  <Briefcase className="w-3.5 h-3.5 text-emerald-400" /> Dealer
+                </Button>
               </div>
-            </div>
+            </details>
           </div>
         )}
-
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };

@@ -180,7 +180,11 @@ async function provisionDatabase() {
     // Leagues Columns
     await createStringCol('leagues', 'name', 255);
     await createStringCol('leagues', 'description', 1000);
+    await createStringCol('leagues', 'logoUrl', 1000);
     await createStringCol('leagues', 'ownerId', 255);
+    await createStringCol('leagues', 'managerId', 255);
+    await createStringCol('leagues', 'managerName', 255);
+    await createStringCol('leagues', 'managerEmail', 255);
     await createStringCol('leagues', 'createdAt', 255);
 
     // Seasons Columns
@@ -207,6 +211,8 @@ async function provisionDatabase() {
     await createIntCol('users', 'careerWins');
     await createIntCol('users', 'careerKOs');
     await createIntCol('users', 'gamesPlayed');
+    await createIntCol('users', 'highHandBadges');
+    await createBoolCol('users', 'hasDgCarryover');
 
     // Events Columns (Seasons have one or more Events)
     await createStringCol('events', 'title', 255);
@@ -221,7 +227,18 @@ async function provisionDatabase() {
     await createStringCol('games', 'title', 255);
     await createStringCol('games', 'scheduledAt', 255);
     await createStringCol('games', 'status', 50);
+    await createStringCol('games', 'seasonId', 255);
+    await createStringCol('games', 'venueId', 255);
+    await createStringCol('games', 'venueName', 255);
     await createStringCol('games', 'dealerName', 255);
+    await createStringCol('games', 'dealers', 500);
+    await createStringCol('games', 'scribes', 500);
+    await createIntCol('games', 'pointMultiplier');
+    await createBoolCol('games', 'isDayGame');
+    await createBoolCol('games', 'noGamePlayed');
+    await createStringCol('games', 'hodRule', 255);
+    await createStringCol('games', 'hotHandDescription', 255);
+    await createIntCol('games', 'purpleCount');
     await createIntCol('games', 'buyinAmount');
     await createIntCol('games', 'rebuyAmount');
     await createIntCol('games', 'addonAmount');
@@ -232,6 +249,7 @@ async function provisionDatabase() {
     await createIntCol('games', 'totalEntriesCount');
     await createIntCol('games', 'currentLevelIndex');
     await createIntCol('games', 'secondsRemainingInLevel');
+    await createStringCol('games', 'rsvpPlayerIds', 2000);
 
     // Game Entries Columns
     await createStringCol('game_entries', 'playerName', 255);
@@ -241,9 +259,21 @@ async function provisionDatabase() {
     await createIntCol('game_entries', 'buyinsCount');
     await createIntCol('game_entries', 'rebuysCount');
     await createIntCol('game_entries', 'addonsCount');
+    await createStringCol('game_entries', 'status', 30);
+    await createBoolCol('game_entries', 'hasDgCarryover');
+    await createBoolCol('game_entries', 'earnedDgForNextGame');
+    await createBoolCol('game_entries', 'survivedRebuy');
+    await createBoolCol('game_entries', 'rebuyOnly');
     await createIntCol('game_entries', 'finishPosition');
     await createIntCol('game_entries', 'pointsAwarded');
     await createIntCol('game_entries', 'kosCount');
+    await createStringCol('game_entries', 'knockouts', 500);
+    await createStringCol('game_entries', 'handBonuses', 500);
+    await createIntCol('game_entries', 'eliminatedBySeat');
+    await createStringCol('game_entries', 'knockedOutByPlayerId', 255);
+    await createStringCol('game_entries', 'knockedOutByPlayerName', 255);
+    await createIntCol('game_entries', 'calculatedBasePoints');
+    await createIntCol('game_entries', 'calculatedFinalPoints');
     await createBoolCol('game_entries', 'isEliminated');
 
     // Hot Hands Columns
@@ -302,7 +332,11 @@ async function provisionDatabase() {
       await tablesDb.createRow(databaseId, 'leagues', mockLeague.$id, {
         name: mockLeague.name,
         description: mockLeague.description,
+        logoUrl: mockLeague.logoUrl || '',
         ownerId: mockLeague.ownerId,
+        managerId: mockLeague.managerId || '',
+        managerName: mockLeague.managerName || '',
+        managerEmail: mockLeague.managerEmail || '',
         createdAt: mockLeague.createdAt,
       }, defaultPermissions);
       console.log('  ✅ Seeded League Row');
@@ -369,6 +403,8 @@ async function provisionDatabase() {
           careerWins: user.careerWins,
           careerKOs: user.careerKOs,
           gamesPlayed: user.gamesPlayed,
+          highHandBadges: user.highHandBadges || 0,
+          hasDgCarryover: Boolean(user.hasDgCarryover),
           league: mockLeague.$id,
         }, defaultPermissions);
         console.log(`  ✅ Seeded User/Player: ${user.name} (${user.role}) -> League(${mockLeague.$id})`);
@@ -413,6 +449,14 @@ async function provisionDatabase() {
           scheduledAt: game.scheduledAt,
           status: game.status,
           dealerName: game.dealerName || '',
+          dealers: JSON.stringify(game.dealers || (game.dealerName ? [game.dealerName] : [])),
+          scribes: JSON.stringify(game.scribes || []),
+          pointMultiplier: game.pointMultiplier || 1,
+          isDayGame: Boolean(game.isDayGame),
+          noGamePlayed: Boolean(game.noGamePlayed),
+          hodRule: game.hodRule || '',
+          hotHandDescription: game.hotHandDescription || '',
+          purpleCount: game.purpleCount || 0,
           buyinAmount: game.buyinAmount,
           rebuyAmount: game.rebuyAmount,
           addonAmount: game.addonAmount,
@@ -422,10 +466,12 @@ async function provisionDatabase() {
           remainingPlayersCount: game.remainingPlayersCount,
           totalEntriesCount: game.totalEntriesCount,
           currentLevelIndex: game.currentLevelIndex || 0,
-          secondsRemainingInLevel: game.secondsRemainingInLevel || 900,
+          secondsRemainingInLevel: game.secondsRemainingInLevel || 1200,
+          rsvpPlayerIds: JSON.stringify(game.rsvpPlayerIds || []),
+          seasonId: game.seasonId,
+          venueId: game.venueId,
+          venueName: game.venueName,
           event: game.eventId,
-          season: game.seasonId,
-          venue: game.venueId,
         }, defaultPermissions);
         console.log(`  ✅ Seeded Game: ${game.title} -> Event(${game.eventId})`);
       } catch (e: any) {
@@ -448,9 +494,21 @@ async function provisionDatabase() {
           buyinsCount: entry.buyinsCount,
           rebuysCount: entry.rebuysCount,
           addonsCount: entry.addonsCount,
+          status: entry.status || (entry.isEliminated ? 'ELIMINATED' : 'ACTIVE'),
+          hasDgCarryover: Boolean(entry.hasDgCarryover),
+          earnedDgForNextGame: Boolean(entry.earnedDgForNextGame),
+          survivedRebuy: Boolean(entry.survivedRebuy),
+          rebuyOnly: Boolean(entry.rebuyOnly),
           finishPosition: entry.finishPosition || 0,
           pointsAwarded: entry.pointsAwarded || 0,
           kosCount: entry.kosCount,
+          knockouts: JSON.stringify(entry.knockouts || []),
+          handBonuses: JSON.stringify(entry.handBonuses || []),
+          eliminatedBySeat: entry.eliminatedBySeat || 0,
+          knockedOutByPlayerId: entry.knockedOutByPlayerId || '',
+          knockedOutByPlayerName: entry.knockedOutByPlayerName || '',
+          calculatedBasePoints: entry.calculatedBasePoints || 0,
+          calculatedFinalPoints: entry.calculatedFinalPoints || 0,
           isEliminated: entry.isEliminated,
           game: entry.gameId,
           player: entry.playerId,

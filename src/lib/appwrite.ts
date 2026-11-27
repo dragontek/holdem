@@ -1,12 +1,17 @@
-import { Client, Databases, TablesDB, Account, Storage, Realtime, ID } from 'appwrite';
+import { Client, Databases, TablesDB, Account, Storage, Realtime, ID, OAuthProvider } from 'appwrite';
 
-export { ID };
+export { ID, OAuthProvider };
 
 const endpoint = import.meta.env.VITE_APPWRITE_ENDPOINT || '';
 const projectId = import.meta.env.VITE_APPWRITE_PROJECT_ID || '';
 export const DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID || 'holdem_db';
 
 export const isAppwriteConfigured = Boolean(endpoint && projectId);
+
+export const AUTH_PROVIDERS = {
+  google: import.meta.env.VITE_ENABLE_GOOGLE_AUTH === 'true',
+  apple: import.meta.env.VITE_ENABLE_APPLE_AUTH === 'true',
+} as const;
 
 export const client = new Client();
 

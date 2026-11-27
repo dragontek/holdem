@@ -27,8 +27,49 @@ import type {
   UserProfile,
   UserRole,
   TournamentEvent,
-  League
+  League,
+  KnockoutCode
 } from './types/holdem';
+import { getEntryKnockouts, syncEntryCalculatedFields, type FinalizedEntryResult } from './lib/scoring';
+
+interface ParsedHashRoute {
+  view: ViewMode;
+  gameId?: string;
+  playerId?: string;
+}
+
+const VALID_VIEWS: readonly ViewMode[] = [
+  'games',
+  'leaderboard',
+  'stats',
+  'director',
+  'admin',
+  'tv',
+  'info',
+  'gallery',
+];
+
+function parseHashRoute(hash: string): ParsedHashRoute {
+  const cleaned = hash.replace(/^#\/?/, '').trim();
+  if (!cleaned) return { view: 'games' };
+
+  const [segment, rawParam] = cleaned.split('/');
+  const param = rawParam ? decodeURIComponent(rawParam) : undefined;
+
+  if ((segment === 'games' || segment === 'director') && param) {
+    return { view: 'director', gameId: param };
+  }
+  if (segment === 'tv') {
+    return { view: 'tv', gameId: param };
+  }
+  if (segment === 'stats') {
+    return { view: 'stats', playerId: param };
+  }
+  if (VALID_VIEWS.includes(segment as ViewMode)) {
+    return { view: segment as ViewMode };
+  }
+  return { view: 'games' };
+}
 
 export const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewMode>('games');
@@ -87,12 +128,46 @@ export const App: React.FC = () => {
         setHotHand(hJackpot);
         setCurrentUser(user);
 
-        const activeG = gList.find((g) => g.status === 'running') || gList[0];
+        const initialRoute = parseHashRoute(window.location.hash);
+        const routeGame = initialRoute.gameId
+          ? gList.find((g) => g.$id === initialRoute.gameId)
+          : undefined;
+        const activeG = routeGame || gList.find((g) => g.status === 'running') || gList[0];
         setSelectedGame(activeG);
+
+        if (initialRoute.playerId) {
+          const routePlayer = pList.find((p) => p.$id === initialRoute.playerId);
+          if (routePlayer) setSelectedPlayer(routePlayer);
+        }
 
         if (activeG) {
           const entries = await AppwriteService.getGameEntries(activeG.$id);
           setGameEntries(entries);
+        }
+
+        // Apply initial hash route (falling back to 'games' if route game wasn't found)
+        if (initialRoute.view === 'director' && !routeGame && initialRoute.gameId) {
+          setCurrentView('games');
+          window.history.replaceState({ view: 'games' }, '', '#games');
+        } else {
+          setCurrentView(initialRoute.view);
+          const canonicalHash =
+            initialRoute.view === 'director' && activeG
+              ? `#games/${encodeURIComponent(activeG.$id)}`
+              : initialRoute.view === 'tv' && activeG
+              ? `#tv/${encodeURIComponent(activeG.$id)}`
+              : initialRoute.view === 'stats' && initialRoute.playerId
+              ? `#stats/${encodeURIComponent(initialRoute.playerId)}`
+              : `#${initialRoute.view}`;
+          window.history.replaceState(
+            {
+              view: initialRoute.view,
+              gameId: activeG?.$id,
+              playerId: initialRoute.playerId,
+            },
+            '',
+            canonicalHash
+          );
         }
       } catch (error) {
         console.error('Error loading data:', error);
@@ -104,36 +179,45 @@ export const App: React.FC = () => {
     loadData();
   }, []);
 
-  // Sync with browser history and popstate
+  // Sync with browser Back / Forward and direct hash changes
   useEffect(() => {
-    const rawHash = window.location.hash.replace('#', '') as ViewMode;
-    const validViews: ViewMode[] = ['games', 'leaderboard', 'stats', 'director', 'admin', 'tv', 'info', 'gallery'];
-    if (validViews.includes(rawHash)) {
-      setCurrentView(rawHash);
-      window.history.replaceState({ view: rawHash }, '', `#${rawHash}`);
-    } else {
-      window.history.replaceState({ view: 'games' }, '', '#games');
-    }
+    const syncFromLocation = async (event?: PopStateEvent) => {
+      const parsed = parseHashRoute(window.location.hash);
+      const state = event?.state as { view?: ViewMode; gameId?: string; playerId?: string } | null;
+
+      const targetGameId = parsed.gameId || (parsed.view === 'director' || parsed.view === 'tv' ? state?.gameId : undefined);
+      const targetPlayerId = parsed.playerId || (parsed.view === 'stats' ? state?.playerId : undefined);
+
+      if (targetGameId) {
+        const foundGame = games.find((g) => g.$id === targetGameId);
+        if (foundGame) {
+          setSelectedGame(foundGame);
+          const entries = await AppwriteService.getGameEntries(foundGame.$id);
+          setGameEntries(entries);
+        }
+      }
+
+      if (targetPlayerId) {
+        const foundPlayer = players.find((p) => p.$id === targetPlayerId);
+        if (foundPlayer) setSelectedPlayer(foundPlayer);
+      }
+
+      setCurrentView(parsed.view);
+    };
 
     const handlePopState = (event: PopStateEvent) => {
-      const state = event.state;
-      const hashView = window.location.hash.replace('#', '') as ViewMode;
-      const targetView: ViewMode =
-        state?.view || (validViews.includes(hashView) ? hashView : 'games');
-
-      if (targetView === 'stats' && state?.playerId) {
-        const found = players.find((p) => p.$id === state.playerId);
-        if (found) setSelectedPlayer(found);
-      }
-      if (targetView === 'director' && state?.gameId) {
-        const found = games.find((g) => g.$id === state.gameId);
-        if (found) setSelectedGame(found);
-      }
-      setCurrentView(targetView);
+      void syncFromLocation(event);
+    };
+    const handleHashChange = () => {
+      void syncFromLocation();
     };
 
     window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('hashchange', handleHashChange);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('hashchange', handleHashChange);
+    };
   }, [players, games]);
 
   // Internal App Navigation Stack
@@ -152,7 +236,13 @@ export const App: React.FC = () => {
 
     setViewHistory((prev) => [...prev, currentView]);
     setCurrentView(view);
-    window.history.pushState({ view }, '', `#${view}`);
+    const nextHash =
+      view === 'director' && selectedGame
+        ? `#games/${encodeURIComponent(selectedGame.$id)}`
+        : view === 'tv' && selectedGame
+        ? `#tv/${encodeURIComponent(selectedGame.$id)}`
+        : `#${view}`;
+    window.history.pushState({ view, gameId: selectedGame?.$id }, '', nextHash);
   };
 
   const handleGoBack = () => {
@@ -171,11 +261,16 @@ export const App: React.FC = () => {
 
   const handleSelectGame = async (game: Game) => {
     setSelectedGame(game);
-    const entries = await AppwriteService.getGameEntries(game.$id);
-    setGameEntries(entries);
+    setGameEntries([]);
     setViewHistory((prev) => [...prev, currentView]);
     setCurrentView('director');
-    window.history.pushState({ view: 'director', gameId: game.$id }, '', '#director');
+    window.history.pushState(
+      { view: 'director', gameId: game.$id },
+      '',
+      `#games/${encodeURIComponent(game.$id)}`
+    );
+    const entries = await AppwriteService.getGameEntries(game.$id);
+    setGameEntries(entries);
   };
 
   const handleUpdateGame = (updatedGame: Game) => {
@@ -187,28 +282,93 @@ export const App: React.FC = () => {
     setSelectedPlayer(player);
     setViewHistory((prev) => [...prev, currentView]);
     setCurrentView('stats');
-    window.history.pushState({ view: 'stats', playerId: player.$id }, '', '#stats');
+    window.history.pushState(
+      { view: 'stats', playerId: player.$id },
+      '',
+      `#stats/${encodeURIComponent(player.$id)}`
+    );
   };
 
-  const handleEliminatePlayer = (entryId: string, koByPlayerId?: string) => {
-    setGameEntries((prev) =>
-      prev.map((entry) => {
+  const handleEliminatePlayer = (
+    entryId: string,
+    koByPlayerId?: string,
+    koType: KnockoutCode | null = 'K',
+    isMuck: boolean = false
+  ) => {
+    setGameEntries((prev) => {
+      const remainingCount = prev.filter((e) => !e.isEliminated).length;
+      const killerEntry = koByPlayerId ? prev.find((e) => e.playerId === koByPlayerId) : undefined;
+      const gameContext = selectedGame || { pointMultiplier: 1 as const, isDayGame: false, noGamePlayed: false };
+
+      return prev.map((entry) => {
         if (entry.$id === entryId) {
-          const remainingCount = prev.filter((e) => !e.isEliminated).length;
-          return {
-            ...entry,
-            isEliminated: true,
-            finishPosition: remainingCount,
-            eliminatedAt: new Date().toISOString(),
-          };
+          return syncEntryCalculatedFields(
+            {
+              ...entry,
+              status: isMuck ? 'MUCK' : 'ELIMINATED',
+              isEliminated: true,
+              finishPosition: remainingCount,
+              eliminatedAt: new Date().toISOString(),
+              eliminatedBySeat: killerEntry?.seatNumber,
+              knockedOutByPlayerId: killerEntry?.playerId,
+              knockedOutByPlayerName: killerEntry?.playerName,
+            },
+            gameContext
+          );
         }
-        if (koByPlayerId && entry.playerId === koByPlayerId) {
-          return {
-            ...entry,
-            kosCount: entry.kosCount + 1,
-          };
+        if (koByPlayerId && koType && entry.playerId === koByPlayerId) {
+          const nextKOs: KnockoutCode[] = [...getEntryKnockouts(entry), koType];
+          return syncEntryCalculatedFields(
+            {
+              ...entry,
+              knockouts: nextKOs,
+              kosCount: nextKOs.length,
+            },
+            gameContext
+          );
         }
         return entry;
+      });
+    });
+  };
+
+  const handleTournamentFinalized = (results: FinalizedEntryResult[]) => {
+    const resultByEntryId = new Map(results.map((r) => [r.entryId, r]));
+    const resultByPlayerId = new Map(results.map((r) => [r.playerId, r]));
+
+    setGameEntries((prev) =>
+      prev.map((entry) => {
+        const res = resultByEntryId.get(entry.$id);
+        if (!res) return entry;
+        return {
+          ...entry,
+          finishPosition: res.finishPosition,
+          status: res.status,
+          isEliminated: res.finishPosition > 1 || res.status === 'MUCK',
+          earnedDgForNextGame: res.earnedDgForNextGame,
+          calculatedBasePoints: res.basePoints,
+          calculatedFinalPoints: res.finalPoints,
+          pointsAwarded: res.finalPoints,
+          knockouts: res.knockouts,
+          kosCount: res.knockouts.length,
+          handBonuses: res.handBonuses,
+        };
+      })
+    );
+
+    setPlayers((prev) =>
+      prev.map((player) => {
+        const res = resultByPlayerId.get(player.$id);
+        if (!res) return player;
+        return {
+          ...player,
+          totalPoints: player.totalPoints + res.finalPoints,
+          gamesPlayed: player.gamesPlayed + 1,
+          careerWins: player.careerWins + (res.finishPosition === 1 && res.status !== 'MUCK' ? 1 : 0),
+          careerKOs: player.careerKOs + res.knockouts.length,
+          highHandBadges: (player.highHandBadges || 0) + res.highHandCount,
+          hasDgCarryover: res.nextHasDgCarryover,
+        };
       })
     );
   };
@@ -265,6 +425,7 @@ export const App: React.FC = () => {
           Exit TV Mode
         </button>
         <VenueTVDisplay
+          key={activeGameToDisplay.$id}
           game={activeGameToDisplay}
           hotHand={hotHand}
           announcements={announcements}
@@ -297,7 +458,7 @@ export const App: React.FC = () => {
             venues={leagueVenues.length > 0 ? leagueVenues : venues}
             seasonName={activeSeasonName}
             announcements={announcements}
-            hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: "Quad 6's", currentPool: 140, isClaimed: false }}
+            hotHand={hotHand || { $id: '1', leagueId: '1', date: 'Aug 22', handTitle: '2/10 Boat', currentPool: 0, isClaimed: false }}
             onSelectGame={handleSelectGame}
             isDirector={AuthService.canAccessDirector(currentUser?.role)}
             onOpenScheduleModal={() => {
@@ -322,8 +483,14 @@ export const App: React.FC = () => {
 
         {currentView === 'stats' && (
           <PlayerStatsView
-            player={selectedPlayer || players[0]}
+            player={
+              (selectedPlayer && players.find((p) => p.$id === selectedPlayer.$id)) ||
+              selectedPlayer ||
+              players[0]
+            }
             allPlayers={players}
+            recentEntries={gameEntries}
+            games={games}
             onBack={handleGoBack}
             backLabel={backLabel}
           />
@@ -331,6 +498,7 @@ export const App: React.FC = () => {
 
         {currentView === 'director' && activeGameToDisplay && (
           <DirectorDesk
+            key={activeGameToDisplay.$id}
             activeGame={activeGameToDisplay}
             gameEntries={gameEntries}
             players={players}
@@ -340,6 +508,7 @@ export const App: React.FC = () => {
             userRole={currentUser?.role || 'player'}
             onUpdateGame={handleUpdateGame}
             onEliminatePlayer={handleEliminatePlayer}
+            onTournamentFinalized={handleTournamentFinalized}
             onSelectGame={handleSelectGame}
             onGamesChange={setGames}
             onEntriesChange={setGameEntries}
@@ -401,7 +570,38 @@ export const App: React.FC = () => {
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
         currentUser={currentUser}
-        onUserChange={setCurrentUser}
+        onUserChange={(user) => {
+          setCurrentUser(user);
+          if (user) {
+            setPlayers((prev) => {
+              const exists = prev.some((p) => p.$id === user.$id);
+              if (exists) {
+                return prev.map((p) => (p.$id === user.$id ? { ...p, ...user } : p));
+              }
+              return [
+                ...prev,
+                {
+                  $id: user.$id,
+                  name: user.name,
+                  nickname: user.nickname || user.name,
+                  email: user.email,
+                  role: user.role,
+                  suitIcon: user.suitIcon || 'spades',
+                  isMember: user.isMember ?? true,
+                  totalPoints: user.totalPoints ?? 0,
+                  careerWins: user.careerWins ?? 0,
+                  careerKOs: user.careerKOs ?? 0,
+                  gamesPlayed: user.gamesPlayed ?? 0,
+                  highHandBadges: 0,
+                  hasDgCarryover: false,
+                },
+              ];
+            });
+          } else if (currentView === 'admin' || currentView === 'director') {
+            setCurrentView('games');
+            window.history.replaceState({ view: 'games' }, '', '#games');
+          }
+        }}
       />
 
       {/* Venues Manager Modal */}

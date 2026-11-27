@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import type { Game, Venue, Season } from '../types/holdem';
+import type { Game, Venue, Season, PointMultiplier } from '../types/holdem';
 import { AppwriteService } from '../services/appwriteService';
+import { OFFICIAL_BLIND_SCHEDULE } from '@/lib/scoring';
 import { 
   Calendar, 
-  DollarSign, 
+  Coins, 
   X, 
   Check, 
   AlertCircle,
   RotateCcw,
-  Sparkles
+  Sparkles,
+  Award,
+  Sun
 } from 'lucide-react';
 
 interface EventScheduleModalProps {
@@ -146,11 +149,12 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
     seasonId: gameToEdit?.seasonId || initialSeasonId,
     scheduledAt: gameToEdit?.scheduledAt || new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
     dealerName: gameToEdit?.dealerName || 'House Dealer',
-    buyinAmount: gameToEdit?.buyinAmount ?? 30,
-    rebuyAmount: gameToEdit?.rebuyAmount ?? 20,
-    addonAmount: gameToEdit?.addonAmount ?? 10,
+    scribesText: (gameToEdit?.scribes || []).join(', '),
+    pointMultiplier: (gameToEdit?.pointMultiplier ?? 1) as PointMultiplier,
+    isDayGame: Boolean(gameToEdit?.isDayGame),
+    hodRule: gameToEdit?.hodRule || '',
+    hotHandDescription: gameToEdit?.hotHandDescription || '',
     startingChips: gameToEdit?.startingChips ?? 15000,
-    hotHandJackpot: gameToEdit?.hotHandJackpot ?? 100,
     status: gameToEdit?.status || 'scheduled',
   });
 
@@ -166,11 +170,12 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
         seasonId: targetSeasonId,
         scheduledAt: gameToEdit?.scheduledAt || new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
         dealerName: gameToEdit?.dealerName || 'House Dealer',
-        buyinAmount: gameToEdit?.buyinAmount ?? 30,
-        rebuyAmount: gameToEdit?.rebuyAmount ?? 20,
-        addonAmount: gameToEdit?.addonAmount ?? 10,
+        scribesText: (gameToEdit?.scribes || []).join(', '),
+        pointMultiplier: (gameToEdit?.pointMultiplier ?? 1) as PointMultiplier,
+        isDayGame: Boolean(gameToEdit?.isDayGame),
+        hodRule: gameToEdit?.hodRule || '',
+        hotHandDescription: gameToEdit?.hotHandDescription || '',
         startingChips: gameToEdit?.startingChips ?? 15000,
-        hotHandJackpot: gameToEdit?.hotHandJackpot ?? 100,
         status: gameToEdit?.status || 'scheduled',
       });
       if (gameToEdit?.isRecurring) {
@@ -207,33 +212,59 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
 
     try {
       const selectedVenue = venues.find((v) => v.$id === formData.venueId);
+      const parsedScribes = formData.scribesText
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const parsedDealers = formData.dealerName
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
 
       // CASE 1: Updating an existing event
       if (isEditing && gameToEdit) {
         const success = await AppwriteService.updateGame(gameToEdit.$id, {
           title: formData.title.trim(),
           venueId: formData.venueId,
+          venueName: selectedVenue?.name || gameToEdit.venueName,
           seasonId: formData.seasonId,
           scheduledAt: formData.scheduledAt,
-          dealerName: formData.dealerName,
-          buyinAmount: Number(formData.buyinAmount),
-          rebuyAmount: Number(formData.rebuyAmount),
-          addonAmount: Number(formData.addonAmount),
+          dealerName: parsedDealers[0] || formData.dealerName,
+          dealers: parsedDealers,
+          scribes: parsedScribes,
+          pointMultiplier: formData.pointMultiplier,
+          isDayGame: formData.isDayGame,
+          hodRule: formData.hodRule.trim(),
+          hotHandDescription: formData.hotHandDescription.trim(),
+          buyinAmount: 0,
+          rebuyAmount: 0,
+          addonAmount: 0,
           startingChips: Number(formData.startingChips),
-          hotHandJackpot: Number(formData.hotHandJackpot),
+          hotHandJackpot: 0,
           status: formData.status as any,
         });
 
         if (success) {
           onGameSaved({
             ...gameToEdit,
-            ...formData,
+            title: formData.title.trim(),
+            venueId: formData.venueId,
+            seasonId: formData.seasonId,
+            scheduledAt: formData.scheduledAt,
+            dealerName: parsedDealers[0] || formData.dealerName,
+            dealers: parsedDealers,
+            scribes: parsedScribes,
+            pointMultiplier: formData.pointMultiplier,
+            isDayGame: formData.isDayGame,
+            hodRule: formData.hodRule.trim(),
+            hotHandDescription: formData.hotHandDescription.trim(),
+            status: formData.status as any,
             venueName: selectedVenue?.name || gameToEdit.venueName,
-            buyinAmount: Number(formData.buyinAmount),
-            rebuyAmount: Number(formData.rebuyAmount),
-            addonAmount: Number(formData.addonAmount),
+            buyinAmount: 0,
+            rebuyAmount: 0,
+            addonAmount: 0,
             startingChips: Number(formData.startingChips),
-            hotHandJackpot: Number(formData.hotHandJackpot),
+            hotHandJackpot: 0,
           });
           onClose();
         } else {
@@ -275,27 +306,30 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
             venueName: selectedVenue?.name || 'Selected Venue',
             seasonId: formData.seasonId,
             scheduledAt: dateItem.displayStr,
-            dealerName: formData.dealerName,
-            buyinAmount: Number(formData.buyinAmount),
-            rebuyAmount: Number(formData.rebuyAmount),
-            addonAmount: Number(formData.addonAmount),
+            dealerName: parsedDealers[0] || formData.dealerName,
+            dealers: parsedDealers,
+            scribes: parsedScribes,
+            pointMultiplier: formData.pointMultiplier,
+            isDayGame: formData.isDayGame,
+            noGamePlayed: false,
+            hodRule: formData.hodRule.trim(),
+            hotHandDescription: formData.hotHandDescription.trim(),
+            purpleCount: 0,
+            buyinAmount: 0,
+            rebuyAmount: 0,
+            addonAmount: 0,
             startingChips: Number(formData.startingChips),
-            hotHandJackpot: Number(formData.hotHandJackpot),
+            hotHandJackpot: 0,
             status: 'scheduled',
             totalPlayersCount: 0,
             remainingPlayersCount: 0,
             totalEntriesCount: 0,
             currentLevelIndex: 0,
-            secondsRemainingInLevel: 900,
+            secondsRemainingInLevel: OFFICIAL_BLIND_SCHEDULE[0].durationMinutes * 60,
             isRecurring: true,
             recurrenceRule,
             seriesId,
-            blindSchedule: [
-              { level: 1, smallBlind: 100, bigBlind: 200, ante: 0, durationMinutes: 15, isBreak: false },
-              { level: 2, smallBlind: 200, bigBlind: 400, ante: 0, durationMinutes: 15, isBreak: false },
-              { level: 3, smallBlind: 300, bigBlind: 600, ante: 600, durationMinutes: 15, isBreak: false },
-              { level: 4, smallBlind: 500, bigBlind: 1000, ante: 1000, durationMinutes: 15, isBreak: false },
-            ],
+            blindSchedule: OFFICIAL_BLIND_SCHEDULE,
           });
 
           createdGames.push({
@@ -334,25 +368,28 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
         venueName: selectedVenue?.name || 'Selected Venue',
         seasonId: formData.seasonId,
         scheduledAt: formData.scheduledAt,
-        dealerName: formData.dealerName,
-        buyinAmount: Number(formData.buyinAmount),
-        rebuyAmount: Number(formData.rebuyAmount),
-        addonAmount: Number(formData.addonAmount),
+        dealerName: parsedDealers[0] || formData.dealerName,
+        dealers: parsedDealers,
+        scribes: parsedScribes,
+        pointMultiplier: formData.pointMultiplier,
+        isDayGame: formData.isDayGame,
+        noGamePlayed: false,
+        hodRule: formData.hodRule.trim(),
+        hotHandDescription: formData.hotHandDescription.trim(),
+        purpleCount: 0,
+        buyinAmount: 0,
+        rebuyAmount: 0,
+        addonAmount: 0,
         startingChips: Number(formData.startingChips),
-        hotHandJackpot: Number(formData.hotHandJackpot),
+        hotHandJackpot: 0,
         status: 'scheduled',
         totalPlayersCount: 0,
         remainingPlayersCount: 0,
         totalEntriesCount: 0,
         currentLevelIndex: 0,
-        secondsRemainingInLevel: 900,
+        secondsRemainingInLevel: OFFICIAL_BLIND_SCHEDULE[0].durationMinutes * 60,
         isRecurring: false,
-        blindSchedule: [
-          { level: 1, smallBlind: 100, bigBlind: 200, ante: 0, durationMinutes: 15, isBreak: false },
-          { level: 2, smallBlind: 200, bigBlind: 400, ante: 0, durationMinutes: 15, isBreak: false },
-          { level: 3, smallBlind: 300, bigBlind: 600, ante: 600, durationMinutes: 15, isBreak: false },
-          { level: 4, smallBlind: 500, bigBlind: 1000, ante: 1000, durationMinutes: 15, isBreak: false },
-        ],
+        blindSchedule: OFFICIAL_BLIND_SCHEDULE,
       });
 
       onGameSaved({
@@ -673,57 +710,102 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
             </div>
           )}
 
-          {/* Buy-in & Chip Structure */}
+          {/* League Scoring & Session Modifiers */}
           <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
             <div className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5" /> Buy-in &amp; Chip Structure
+              <Award className="w-3.5 h-3.5" /> League Scoring &amp; Session Modifiers
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Buy-in ($)</label>
+                <label className="text-[10px] text-slate-400 block mb-1">Point Multiplier</label>
+                <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-950 border border-slate-800">
+                  {([1, 2, 3] as const).map((mult) => (
+                    <button
+                      key={mult}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, pointMultiplier: mult })}
+                      className={`py-1.5 rounded text-xs font-bold transition-colors ${
+                        formData.pointMultiplier === mult
+                          ? 'bg-amber-500 text-slate-950'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {mult}x {mult === 1 ? 'Single' : mult === 2 ? 'Double' : 'Triple'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Day Game (DG) Carryover</label>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, isDayGame: !formData.isDayGame })}
+                  className={`w-full h-[38px] px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-colors ${
+                    formData.isDayGame
+                      ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Sun className="w-3.5 h-3.5" />
+                  {formData.isDayGame ? 'Day Game Active (Earns 2x Next Game)' : 'Standard Session (No DG)'}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Hand of the Day (HOD)</label>
                 <input
-                  type="number"
-                  min="0"
-                  value={formData.buyinAmount}
-                  onChange={(e) => setFormData({ ...formData, buyinAmount: Number(e.target.value) })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-bold"
+                  type="text"
+                  placeholder="e.g. Connected"
+                  value={formData.hodRule}
+                  onChange={(e) => setFormData({ ...formData, hodRule: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Re-buy ($)</label>
+                <label className="text-[10px] text-slate-400 block mb-1">Hot Hand Target</label>
                 <input
-                  type="number"
-                  min="0"
-                  value={formData.rebuyAmount}
-                  onChange={(e) => setFormData({ ...formData, rebuyAmount: Number(e.target.value) })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-bold"
+                  type="text"
+                  placeholder="e.g. 2/10 Boat"
+                  value={formData.hotHandDescription}
+                  onChange={(e) => setFormData({ ...formData, hotHandDescription: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Add-on ($)</label>
+                <label className="text-[10px] text-slate-400 block mb-1">Assigned Scribe(s)</label>
                 <input
-                  type="number"
-                  min="0"
-                  value={formData.addonAmount}
-                  onChange={(e) => setFormData({ ...formData, addonAmount: Number(e.target.value) })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-bold"
+                  type="text"
+                  placeholder="e.g. Kyle, Chip"
+                  value={formData.scribesText}
+                  onChange={(e) => setFormData({ ...formData, scribesText: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"
                 />
               </div>
+            </div>
+          </div>
 
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Starting Chips</label>
-                <input
-                  type="number"
-                  step="1000"
-                  min="1000"
-                  value={formData.startingChips}
-                  onChange={(e) => setFormData({ ...formData, startingChips: Number(e.target.value) })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-bold"
-                />
-              </div>
+          {/* Starting Chip Stack */}
+          <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+            <div className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Coins className="w-3.5 h-3.5" /> Tournament Chip Stack
+            </div>
+
+            <div className="max-w-xs">
+              <label className="text-[10px] text-slate-400 block mb-1">Starting Chips</label>
+              <input
+                type="number"
+                step="1000"
+                min="1000"
+                value={formData.startingChips}
+                onChange={(e) => setFormData({ ...formData, startingChips: Number(e.target.value) })}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-bold"
+              />
             </div>
           </div>
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { Images, Trophy, Sparkles, MapPin, Calendar, X } from 'lucide-react';
+import { Images, MapPin, Calendar, X } from 'lucide-react';
 
 interface GalleryItem {
   id: string;
@@ -43,12 +43,12 @@ const mockGalleryItems: GalleryItem[] = [
   },
   {
     id: 'g4',
-    title: 'Quad 6s High Hand Jackpot Winner',
+    title: 'Quad 6s High Hand Bonus Winner',
     category: 'champions',
     imageUrl: 'https://images.unsplash.com/photo-1511193311914-0346f16efe90?auto=format&fit=crop&q=80&w=800',
     date: 'July 28, 2026',
     venueName: 'Murray Street Darts',
-    description: 'Johnny Chan flopping quad sixes to scoop the progressive Hot Hand cash jackpot.',
+    description: 'Johnny Chan flopping quad sixes to claim the Hot Hand and Four of a Kind league points bonus.',
   },
   {
     id: 'g5',

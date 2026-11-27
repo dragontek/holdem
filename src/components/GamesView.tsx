@@ -126,17 +126,17 @@ export const GamesView: React.FC<GamesViewProps> = ({
         </div>
       ))}
 
-      {/* 2. Hot Hand Jackpot Side-Promo Banner */}
-      <div className="glass-card rounded-2xl p-5 border border-amber-500/30 relative overflow-hidden gold-glow">
+      {/* 2. Daily Hot Hand Bonus Target Banner */}
+      <div className="glass-card rounded-2xl p-5 border border-amber-500/30 relative overflow-hidden">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-amber-500/20 rounded-xl border border-amber-500/40 text-amber-400">
-              <Flame className="w-7 h-7 text-amber-400 animate-pulse" />
+              <Flame className="w-7 h-7 text-amber-400" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs uppercase tracking-widest text-amber-400 font-extrabold flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" /> DAILY HOT HAND JACKPOT
+                  <Sparkles className="w-3.5 h-3.5" /> DAILY HOT HAND TARGET
                 </span>
                 <span className="text-xs text-slate-400">• {hotHand.date}</span>
               </div>
@@ -146,13 +146,21 @@ export const GamesView: React.FC<GamesViewProps> = ({
 
           <div className="flex items-center gap-4 bg-slate-900/90 px-4 py-2.5 rounded-xl border border-amber-500/30">
             <div className="text-right">
-              <div className="text-[10px] uppercase text-slate-400 font-semibold">Current Bounty</div>
-              <div className="text-2xl font-black text-amber-400">${hotHand.currentPool}</div>
+              <div className="text-[10px] uppercase text-slate-400 font-semibold">Hot Hand Bonus</div>
+              <div className="text-xl font-mono font-black text-amber-400">Session Target</div>
             </div>
-            <div className="w-px h-8 bg-slate-800" />
-            <button className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all">
-              Claim Info
-            </button>
+            {onNavigateInfo && (
+              <>
+                <div className="w-px h-8 bg-slate-800" />
+                <button
+                  type="button"
+                  onClick={onNavigateInfo}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all"
+                >
+                  Scoring Rules
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -262,6 +270,24 @@ export const GamesView: React.FC<GamesViewProps> = ({
                         Dealer: {game.dealerName}
                       </span>
                     )}
+
+                    {(game.pointMultiplier ?? 1) > 1 && (
+                      <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold">
+                        {game.pointMultiplier}x Points
+                      </span>
+                    )}
+
+                    {game.isDayGame && (
+                      <span className="px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 text-xs font-bold">
+                        DG
+                      </span>
+                    )}
+
+                    {game.noGamePlayed && (
+                      <span className="px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold">
+                        No-Game
+                      </span>
+                    )}
                   </div>
 
                   <ChevronRight className="w-5 h-5 text-slate-500 group-hover:text-amber-400 group-hover:translate-x-1 transition-all" />
@@ -273,6 +299,21 @@ export const GamesView: React.FC<GamesViewProps> = ({
                     {game.venueName}
                   </h3>
                   <p className="text-sm text-slate-400">{game.title}</p>
+                  {(game.hodRule || game.hotHandDescription) && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-400">
+                      {game.hodRule && (
+                        <span>
+                          HOD: <strong className="text-amber-300">{game.hodRule}</strong>
+                        </span>
+                      )}
+                      {game.hodRule && game.hotHandDescription && <span>•</span>}
+                      {game.hotHandDescription && (
+                        <span>
+                          Hot Hand: <strong className="text-rose-300">{game.hotHandDescription}</strong>
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Venue Address & Contact Quick Strip */}
@@ -310,8 +351,10 @@ export const GamesView: React.FC<GamesViewProps> = ({
                 {/* Game Metrics Grid */}
                 <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/60 text-center">
                   <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-800">
-                    <div className="text-[10px] text-slate-400 uppercase font-semibold">Buy-in</div>
-                    <div className="text-sm font-bold text-emerald-400">${game.buyinAmount}</div>
+                    <div className="text-[10px] text-slate-400 uppercase font-semibold">Points Scale</div>
+                    <div className="text-sm font-bold text-emerald-400">
+                      {game.pointMultiplier ?? 1}x {game.isDayGame ? '• DG' : ''}
+                    </div>
                   </div>
 
                   <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-800">
@@ -336,7 +379,7 @@ export const GamesView: React.FC<GamesViewProps> = ({
                     <span>{game.rsvpPlayerIds?.length || 0} RSVPs confirmed</span>
                   </div>
 
-                  {game.status === 'scheduled' && onToggleRSVP && (
+                  {(game.status === 'scheduled' || game.status === 'running') && onToggleRSVP && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

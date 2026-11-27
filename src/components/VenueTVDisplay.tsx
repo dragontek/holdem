@@ -86,19 +86,34 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
           </div>
           <div>
             <h1 className="text-3xl font-black tracking-tight text-white">{game.venueName}</h1>
-            <p className="text-sm font-semibold text-amber-400 flex items-center gap-2">
+            <p className="text-sm font-semibold text-amber-400 flex flex-wrap items-center gap-2">
               <span>{game.title}</span> • <span>Dealer: {game.dealerName || 'House'}</span>
+              {(game.pointMultiplier ?? 1) > 1 && (
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-black">
+                  {game.pointMultiplier}x POINTS
+                </span>
+              )}
+              {game.isDayGame && (
+                <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 text-xs font-black">
+                  DAY GAME (DG)
+                </span>
+              )}
+              {game.hodRule && (
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
+                  HOD: {game.hodRule}
+                </span>
+              )}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="glass-card px-5 py-2.5 rounded-2xl border border-amber-500/40 gold-glow text-right">
+          <div className="glass-card px-5 py-2.5 rounded-2xl border border-amber-500/40 text-right">
             <div className="text-[10px] font-extrabold uppercase text-amber-400 tracking-wider">
-              HOT HAND JACKPOT
+              HOT HAND TARGET
             </div>
-            <div className="text-2xl font-black text-amber-300">
-              ${hotHand.currentPool} <span className="text-xs text-slate-400 font-normal">({hotHand.handTitle})</span>
+            <div className="text-xl font-black text-amber-300">
+              {game.hotHandDescription || hotHand.handTitle}
             </div>
           </div>
 
@@ -173,7 +188,11 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
           {/* Next Blinds Preview */}
           {nextLevel && (
             <div className="text-sm font-semibold text-slate-300 pt-2">
-              NEXT LEVEL ({nextLevel.level}): <span className="text-amber-300 font-bold">{nextLevel.smallBlind} / {nextLevel.bigBlind}</span> (Ante: {nextLevel.ante})
+              {nextLevel.isBreak ? (
+                <>NEXT: <span className="text-amber-300 font-bold">{nextLevel.breakTitle || '10-Min Break'}</span> ({nextLevel.durationMinutes} min)</>
+              ) : (
+                <>NEXT LEVEL ({nextLevel.durationMinutes} min): <span className="text-amber-300 font-bold">{nextLevel.smallBlind.toLocaleString()} / {nextLevel.bigBlind.toLocaleString()}</span>{nextLevel.ante > 0 ? ` (Ante: ${nextLevel.ante.toLocaleString()})` : ''}</>
+              )}
             </div>
           )}
 

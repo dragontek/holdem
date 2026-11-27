@@ -11,7 +11,9 @@ import {
   isShowUpAwarded,
   KO_CODE_LIST,
   KO_DEFINITIONS,
+  syncEntryCalculatedFields,
 } from '@/lib/scoring';
+import { diffEntryForScoreEvents } from '@/lib/liveScoreEvents';
 import {
   Dialog,
   DialogContent,
@@ -101,17 +103,25 @@ export const PlayerScoreDialog: React.FC<PlayerScoreDialogProps> = ({
   const countKO = (code: KnockoutCode) => knockouts.filter((c) => c === code).length;
   const countHD = (code: HandBonusCode) => handBonuses.filter((c) => c === code).length;
 
-  const flashBroadcastFeedback = (msg: string) => {
-    setInlineBroadcastMsg(msg);
+  const flashEventFeedback = (updates: Partial<GameEntry>) => {
+    const synced = syncEntryCalculatedFields({ ...entry, ...updates }, game);
+    const events = diffEntryForScoreEvents(entry, synced, game, entries);
+    const primary = events[0];
+    if (primary) {
+      const ptsSuffix =
+        primary.pointsAwarded > 0 ? ` (+${primary.pointsAwarded.toLocaleString()} pts)` : '';
+      setInlineBroadcastMsg(`${primary.headline}${ptsSuffix}`);
+    } else {
+      setInlineBroadcastMsg('');
+    }
   };
 
   const adjustKO = (code: KnockoutCode, delta: 1 | -1) => {
     if (delta === 1) {
       const next = [...knockouts, code];
-      onUpdateEntry(entry.$id, { knockouts: next, kosCount: next.length });
-      flashBroadcastFeedback(
-        `Broadcasted to players & TV: ${entry.playerName} just scored a ${KO_DEFINITIONS[code].label}!`
-      );
+      const updates = { knockouts: next, kosCount: next.length };
+      onUpdateEntry(entry.$id, updates);
+      flashEventFeedback(updates);
     } else {
       const idx = knockouts.lastIndexOf(code);
       if (idx === -1) return;
@@ -123,10 +133,9 @@ export const PlayerScoreDialog: React.FC<PlayerScoreDialogProps> = ({
 
   const adjustHD = (code: HandBonusCode, delta: 1 | -1) => {
     if (delta === 1) {
-      onUpdateEntry(entry.$id, { handBonuses: [...handBonuses, code] });
-      flashBroadcastFeedback(
-        `Broadcasted to players & TV: ${entry.playerName} earned ${HAND_BONUS_DEFINITIONS[code].label}!`
-      );
+      const updates = { handBonuses: [...handBonuses, code] };
+      onUpdateEntry(entry.$id, updates);
+      flashEventFeedback(updates);
     } else {
       const idx = handBonuses.lastIndexOf(code);
       if (idx === -1) return;

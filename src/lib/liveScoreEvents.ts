@@ -4,7 +4,10 @@ import {
   getEntryKnockouts,
   HAND_BONUS_CODE_LIST,
   HAND_BONUS_DEFINITIONS,
+  isShowUpAwarded,
   KO_DEFINITIONS,
+  PLACEMENT_POINTS,
+  SHOW_UP_POINTS,
 } from '@/lib/scoring';
 
 export type ScoreEventVariant =
@@ -17,7 +20,9 @@ export type ScoreEventVariant =
   | 'straight_flush'
   | 'royal_flush'
   | 'survivor'
-  | 'show_up';
+  | 'show_up'
+  | 'placement'
+  | 'points';
 
 export interface LiveScoreNotification {
   id: string;
@@ -166,6 +171,74 @@ export function createEliminationNotification(params: {
   };
 }
 
+export function createShowUpCutoffNotification(
+  game: Game,
+  awardedCount: number
+): LiveScoreNotification {
+  const now = Date.now();
+  const sessionMult = game.noGamePlayed ? 1 : game.pointMultiplier ?? 1;
+  const finalPts = SHOW_UP_POINTS * sessionMult;
+  return {
+    id: `ev_${now}_showup_cutoff`,
+    fingerprint: `showup_cutoff:${game.$id}`,
+    gameId: game.$id,
+    gameTitle: game.title,
+    venueName: game.venueName,
+    variant: 'show_up',
+    headline: `1:15 mark reached — Show Up points awarded to ${awardedCount} seated ${
+      awardedCount === 1 ? 'player' : 'players'
+    }!`,
+    subtext: buildContextSubtext(game, 'Automatic Show Up Bonus'),
+    basePoints: SHOW_UP_POINTS,
+    pointsAwarded: finalPts,
+    primaryPlayerId: '',
+    primaryPlayerName: 'All Seated Players',
+    isMajorCelebration: false,
+    createdAt: now,
+  };
+}
+
+export function createPlacementNotification(params: {
+  game: Game;
+  playerId: string;
+  playerName: string;
+  finishPosition: number;
+  pointsAwarded: number;
+  basePoints?: number;
+}): LiveScoreNotification {
+  const { game, playerId, playerName, finishPosition, pointsAwarded, basePoints } = params;
+  const now = Date.now();
+  const ordinal =
+    finishPosition === 1
+      ? '1st'
+      : finishPosition === 2
+      ? '2nd'
+      : finishPosition === 3
+      ? '3rd'
+      : `${finishPosition}th`;
+  const headline =
+    finishPosition === 1
+      ? `${playerName} won ${game.title}!`
+      : `${playerName} finished ${ordinal} place!`;
+
+  return {
+    id: `ev_${now}_place_${finishPosition}_${Math.random().toString(36).slice(2, 7)}`,
+    fingerprint: `place:${game.$id}:${playerId}:${finishPosition}`,
+    gameId: game.$id,
+    gameTitle: game.title,
+    venueName: game.venueName,
+    variant: 'placement',
+    headline,
+    subtext: buildContextSubtext(game, `${ordinal} Place Official Finish`),
+    basePoints: basePoints ?? PLACEMENT_POINTS[finishPosition] ?? 0,
+    pointsAwarded,
+    primaryPlayerId: playerId,
+    primaryPlayerName: playerName,
+    isMajorCelebration: finishPosition <= 3,
+    createdAt: now,
+  };
+}
+
 /**
  * Compares previous and updated GameEntry snapshots (from local actions or Appwrite Realtime)
  * to emit human-readable live notifications for players and Venue TV displays.
@@ -280,6 +353,53 @@ export function diffEntryForScoreEvents(
     }
   }
 
+  // 4. Show Up Points Newly Awarded (+600 base)
+  const prevShowUp = isShowUpAwarded(prev, game);
+  const nextShowUp = isShowUpAwarded(next, game);
+  if (!prevShowUp && nextShowUp && next.status !== 'MUCK') {
+    const finalPts = SHOW_UP_POINTS * mult;
+    events.push({
+      id: `ev_${now}_showup_${Math.random().toString(36).slice(2, 7)}`,
+      fingerprint: `showup:${game.$id}:${next.$id}`,
+      gameId: game.$id,
+      gameTitle: game.title,
+      venueName: game.venueName,
+      variant: 'show_up',
+      headline: `${next.playerName} earned Show Up points!`,
+      subtext: buildContextSubtext(game, `Seat ${next.seatNumber} (Table ${next.tableNumber})`),
+      basePoints: SHOW_UP_POINTS,
+      pointsAwarded: finalPts,
+      primaryPlayerId: next.playerId,
+      primaryPlayerName: next.playerName,
+      isMajorCelebration: false,
+      createdAt: now,
+    });
+  }
+
+  // 5. Official Placement Awarded (1st - 5th place on finalization or manual placement)
+  if (
+    typeof next.finishPosition === 'number' &&
+    next.finishPosition >= 1 &&
+    next.finishPosition <= 5 &&
+    prev.finishPosition !== next.finishPosition &&
+    next.status !== 'MUCK'
+  ) {
+    const basePlacement = PLACEMENT_POINTS[next.finishPosition] || 0;
+    const placementPts = basePlacement * mult;
+    if (placementPts > 0) {
+      events.push(
+        createPlacementNotification({
+          game,
+          playerId: next.playerId,
+          playerName: next.playerName,
+          finishPosition: next.finishPosition,
+          basePoints: basePlacement,
+          pointsAwarded: placementPts,
+        })
+      );
+    }
+  }
+
   return events;
 }
 
@@ -296,7 +416,10 @@ export function playScoreChime(variant: ScoreEventVariant): void {
     const ctx = new AudioCtx();
     const now = ctx.currentTime;
     const notes =
-      variant === 'royal_flush' || variant === 'straight_flush' || variant === 'quads'
+      variant === 'royal_flush' ||
+      variant === 'straight_flush' ||
+      variant === 'quads' ||
+      variant === 'placement'
         ? [523.25, 659.25, 783.99, 1046.5]
         : variant === 'knockout' || variant === 'rebuy_ko'
         ? [440, 554.37, 659.25]

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { LiveScoreNotification, ScoreEventVariant } from '@/lib/liveScoreEvents';
-import { Award, Crown, Flame, Skull, Sparkles, Star, Volume2, VolumeX, X } from 'lucide-react';
+import { Award, Crown, Flame, Skull, Sparkles, Star, Trophy, Volume2, VolumeX, X } from 'lucide-react';
 
 export interface LiveScoreNotificationOverlayProps {
   toasts: LiveScoreNotification[];
@@ -9,7 +9,7 @@ export interface LiveScoreNotificationOverlayProps {
   onDismiss: (id: string) => void;
 }
 
-const AUTO_DISMISS_MS = 6500;
+const AUTO_DISMISS_MS = 60_000;
 
 function getVariantPresentation(variant: ScoreEventVariant) {
   switch (variant) {
@@ -45,8 +45,16 @@ function getVariantPresentation(variant: ScoreEventVariant) {
         icon: <Sparkles className="w-5 h-5 text-emerald-400" aria-hidden="true" />,
         tag: 'HAND OF THE DAY',
       };
+    case 'placement':
+      return {
+        border: 'border-amber-400/70 bg-slate-950/95',
+        badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-400/50',
+        icon: <Trophy className="w-5 h-5 text-amber-400" aria-hidden="true" />,
+        tag: 'OFFICIAL FINISH',
+      };
     case 'survivor':
     case 'show_up':
+    case 'points':
     default:
       return {
         border: 'border-amber-500/50 bg-slate-950/95',
@@ -57,7 +65,12 @@ function getVariantPresentation(variant: ScoreEventVariant) {
           ) : (
             <Award className="w-5 h-5 text-emerald-400" aria-hidden="true" />
           ),
-        tag: variant === 'survivor' ? 'SURVIVOR' : 'POINTS AWARDED',
+        tag:
+          variant === 'survivor'
+            ? 'SURVIVOR'
+            : variant === 'show_up'
+            ? 'SHOW UP BONUS'
+            : 'POINTS AWARDED',
       };
   }
 }
@@ -78,15 +91,28 @@ const ToastCardItem: React.FC<ToastCardItemProps> = ({
   registerCloseRef,
 }) => {
   const [paused, setPaused] = useState(false);
+  const onDismissRef = useRef(onDismiss);
+  const remainingMsRef = useRef<number>(AUTO_DISMISS_MS);
+  const startedAtRef = useRef<number>(0);
   const style = getVariantPresentation(item.variant);
 
   useEffect(() => {
+    onDismissRef.current = onDismiss;
+  });
+
+  useEffect(() => {
     if (paused) return;
+    startedAtRef.current = Date.now();
+    const delay = Math.max(0, remainingMsRef.current);
     const timer = setTimeout(() => {
-      onDismiss(item.id, false);
-    }, AUTO_DISMISS_MS);
-    return () => clearTimeout(timer);
-  }, [item.id, paused, onDismiss]);
+      onDismissRef.current(item.id, false);
+    }, delay);
+    return () => {
+      clearTimeout(timer);
+      const elapsed = Date.now() - startedAtRef.current;
+      remainingMsRef.current = Math.max(0, remainingMsRef.current - elapsed);
+    };
+  }, [item.id, paused]);
 
   return (
     <div

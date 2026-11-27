@@ -60,6 +60,8 @@ export const TVBroadcastBanner: React.FC<TVBroadcastBannerProps> = ({ alert }) =
               <Flame className="w-9 h-9" aria-hidden="true" />
             ) : isBust ? (
               <Skull className="w-9 h-9" aria-hidden="true" />
+            ) : alert.variant === 'placement' ? (
+              <Trophy className="w-9 h-9" aria-hidden="true" />
             ) : alert.variant === 'quads' ||
               alert.variant === 'straight_flush' ||
               alert.variant === 'royal_flush' ? (

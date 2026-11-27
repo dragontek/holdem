@@ -282,4 +282,5 @@ npm run bundle:site
   - `feat!:` / `BREAKING CHANGE:` → triggers **Major** release (`vX.0.0`)
   - `docs:`, `ci:`, `build:`, `style:`, `test:`, `chore:` → no version bump unless paired with a release commit
 - **Local Hook**: Run `npm run hooks:install` once per clone to enable `.githooks/commit-msg`.
-- **Automated Releases**: Merging `develop` into `main` runs `.github/workflows/release.yml` (`semantic-release` via `.releaserc.json`), which verifies lint/build/bundle, computes the next `v1.x.x` tag, generates `CHANGELOG.md` and GitHub Release Notes from commits, attaches `holdem-site.tar.gz`, and syncs the release commit back to `develop`.
+- **DEV Environment (GitHub Pages)**: Every push to `develop` triggers `.github/workflows/deploy-dev.yml`, building with `VITE_BASE_PATH=/holdem/` (plus SPA `404.html` fallback) and deploying automatically to GitHub Pages.
+- **PROD Environment (Appwrite Sites + Semantic Releases)**: Merging/pushing `develop` into `main` triggers `.github/workflows/release.yml`, which verifies lint/build/bundle, computes the next `v1.x.x` tag + `CHANGELOG.md` + GitHub Release Notes (attaching `holdem-site.tar.gz`), syncs the release commit back to `develop`, and automatically uploads + activates `holdem-site.tar.gz` on Appwrite Sites via `scripts/deployAppwriteSite.mjs`.

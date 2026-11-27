@@ -1,0 +1,71 @@
+name: Deploy DEV — GitHub Pages (develop)
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-dev
+  cancel-in-progress: true
+
+jobs:
+  build-dev:
+    name: Build DEV Bundle (GitHub Pages)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Setup GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build SPA for GitHub Pages DEV
+        env:
+          # Uses custom PAGES_BASE_PATH variable if configured, otherwise /<repo-name>/
+          VITE_BASE_PATH: ${{ vars.PAGES_BASE_PATH || format('/{0}/', github.event.repository.name) }}
+          VITE_APPWRITE_ENDPOINT: ${{ vars.DEV_VITE_APPWRITE_ENDPOINT || vars.VITE_APPWRITE_ENDPOINT || 'https://dragontek.io/v1' }}
+          VITE_APPWRITE_PROJECT_ID: ${{ vars.DEV_VITE_APPWRITE_PROJECT_ID || vars.VITE_APPWRITE_PROJECT_ID || '6ad3e9f6000495b2033d' }}
+          VITE_APPWRITE_DATABASE_ID: ${{ vars.DEV_VITE_APPWRITE_DATABASE_ID || vars.VITE_APPWRITE_DATABASE_ID || 'holdem_db' }}
+          VITE_APPWRITE_VENUE_BUCKET_ID: ${{ vars.DEV_VITE_APPWRITE_VENUE_BUCKET_ID || vars.VITE_APPWRITE_VENUE_BUCKET_ID || 'venue_images' }}
+        run: npm run build
+
+      - name: Configure SPA Deep-Link Fallback (404.html + .nojekyll)
+        run: |
+          cp dist/index.html dist/404.html
+          touch dist/.nojekyll
+
+      - name: Upload GitHub Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy-dev:
+    name: Deploy to GitHub Pages (DEV)
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build-dev
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

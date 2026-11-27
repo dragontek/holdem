@@ -67,7 +67,7 @@ jobs:
       - name: Validate Service Worker & PWA Manifest
         run: |
           node --check public/sw.js
-          node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/manifest.webmanifest','utf8')); for (const ic of m.icons) { if (!fs.existsSync('public'+ic.src)) throw new Error('Missing PWA icon: public'+ic.src); } console.log('PWA manifest valid:', m.name);"
+          node -e "const fs=require('fs'),path=require('path'); const m=JSON.parse(fs.readFileSync('public/manifest.webmanifest','utf8')); for (const ic of m.icons) { const p=path.join('public', ic.src); if (!fs.existsSync(p)) throw new Error('Missing PWA icon: '+p); } console.log('PWA manifest valid:', m.name);"
 
       - name: Typecheck, Build & Bundle Site Tarball
         run: npm run bundle:site

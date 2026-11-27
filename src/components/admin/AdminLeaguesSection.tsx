@@ -111,7 +111,7 @@ export const AdminLeaguesSection: React.FC<AdminLeaguesSectionProps> = ({
                         <option value="" disabled>Change Manager...</option>
                         {users.map((u) => (
                           <option key={u.$id} value={u.$id}>
-                            {u.name} ({u.role.toUpperCase()})
+                            {u.name || 'Unnamed User'} ({(u.role || 'player').toUpperCase()})
                           </option>
                         ))}
                       </select>

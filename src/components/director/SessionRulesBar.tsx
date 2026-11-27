@@ -1,10 +1,11 @@
 import React from 'react';
-import type { Game, PointMultiplier } from '@/types/holdem';
+import type { Game, Player, PointMultiplier } from '@/types/holdem';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { StaffMultiSelect } from '@/components/StaffMultiSelect';
 import {
   Flame,
   Minus,
@@ -12,12 +13,12 @@ import {
   Sparkles,
   Sun,
   Ban,
-  Users,
   SlidersHorizontal,
 } from 'lucide-react';
 
 export interface SessionRulesBarProps {
   game: Game;
+  players: Player[];
   canEdit: boolean;
   onUpdateSessionRules: (updates: Partial<Game>) => void;
 }
@@ -28,27 +29,21 @@ const MULTIPLIERS: readonly { value: PointMultiplier; label: string }[] = [
   { value: 3, label: '3x Triple' },
 ];
 
-function parseNamesList(raw: string): string[] {
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 export const SessionRulesBar: React.FC<SessionRulesBarProps> = ({
   game,
+  players,
   canEdit,
   onUpdateSessionRules,
 }) => {
   const isLocked = !canEdit || game.status === 'completed';
   const currentMultiplier: PointMultiplier = game.pointMultiplier ?? 1;
-  const dealersText = (game.dealers && game.dealers.length > 0
-    ? game.dealers
-    : game.dealerName
-    ? [game.dealerName]
-    : []
-  ).join(', ');
-  const scribesText = (game.scribes ?? []).join(', ');
+  const selectedDealers =
+    game.dealers && game.dealers.length > 0
+      ? game.dealers
+      : game.dealerName
+      ? [game.dealerName]
+      : [];
+  const selectedScribes = game.scribes ?? [];
   const purpleCount = game.purpleCount ?? 0;
 
   return (
@@ -217,48 +212,36 @@ export const SessionRulesBar: React.FC<SessionRulesBarProps> = ({
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="session-dealers" className="text-[11px] text-slate-400 flex items-center gap-1">
-              <Users className="w-3 h-3 text-emerald-400" /> Dealer(s)
-            </Label>
-            <Input
-              id="session-dealers"
-              disabled={isLocked}
-              defaultValue={dealersText}
-              key={`dealers-${game.$id}-${dealersText}`}
-              placeholder="e.g. Tizzie, Mustache"
-              onBlur={(e) => {
-                const parsed = parseNamesList(e.target.value);
-                if (parsed.join(', ') !== dealersText) {
-                  onUpdateSessionRules({
-                    dealers: parsed,
-                    dealerName: parsed[0] || '',
-                  });
-                }
-              }}
-              className="h-9 text-xs"
-            />
-          </div>
+          <StaffMultiSelect
+            id="session-dealers"
+            label="Dealer(s)"
+            role="dealer"
+            accounts={players}
+            selectedNames={selectedDealers}
+            disabled={isLocked}
+            compact
+            onChange={(nextDealers) =>
+              onUpdateSessionRules({
+                dealers: nextDealers,
+                dealerName: nextDealers[0] || '',
+              })
+            }
+          />
 
-          <div className="space-y-1.5">
-            <Label htmlFor="session-scribes" className="text-[11px] text-slate-400 flex items-center gap-1">
-              <Users className="w-3 h-3 text-indigo-400" /> Scribe(s)
-            </Label>
-            <Input
-              id="session-scribes"
-              disabled={isLocked}
-              defaultValue={scribesText}
-              key={`scribes-${game.$id}-${scribesText}`}
-              placeholder="e.g. Kyle, Chip"
-              onBlur={(e) => {
-                const parsed = parseNamesList(e.target.value);
-                if (parsed.join(', ') !== scribesText) {
-                  onUpdateSessionRules({ scribes: parsed });
-                }
-              }}
-              className="h-9 text-xs"
-            />
-          </div>
+          <StaffMultiSelect
+            id="session-scribes"
+            label="Scribe(s)"
+            role="scribe"
+            accounts={players}
+            selectedNames={selectedScribes}
+            disabled={isLocked}
+            compact
+            onChange={(nextScribes) =>
+              onUpdateSessionRules({
+                scribes: nextScribes,
+              })
+            }
+          />
         </div>
       </CardContent>
     </Card>

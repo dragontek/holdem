@@ -289,7 +289,8 @@ export const LeagueManagerModal: React.FC<LeagueManagerModalProps> = ({
                   <option value="" disabled>Select user to assign as League Manager...</option>
                   {users.map((u) => (
                     <option key={u.$id} value={u.$id}>
-                      {u.name} ({u.email}) — Role: {u.role.toUpperCase()}
+                      {u.name || 'Unnamed User'}
+                      {u.email ? ` (${u.email})` : ''} — Role: {(u.role || 'player').toUpperCase()}
                     </option>
                   ))}
                 </select>

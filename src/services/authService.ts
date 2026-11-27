@@ -492,8 +492,8 @@ export class AuthService {
 
     const oauthProvider = provider === 'google' ? OAuthProvider.Google : OAuthProvider.Apple;
     const baseUrl = `${window.location.origin}${window.location.pathname}`;
-    const successUrl = `${baseUrl}?auth_callback=oauth${window.location.hash || '#games'}`;
-    const failureUrl = `${baseUrl}${window.location.hash || '#games'}`;
+    const successUrl = `${baseUrl}?auth_callback=oauth`;
+    const failureUrl = baseUrl;
 
     try {
       account.createOAuth2Session(oauthProvider, successUrl, failureUrl);
@@ -518,24 +518,79 @@ export class AuthService {
   }
 
   /**
-   * Get all registered users and staff
+   * Get all registered users and staff (sourced from Appwrite DB with local directory merge)
    */
   static async getAllUsers(): Promise<UserProfile[]> {
+    let dbUsers: UserProfile[] = [];
+    try {
+      dbUsers = await AppwriteService.getPlayers();
+    } catch {
+      dbUsers = [];
+    }
+
+    let localUsers: UserProfile[] = [];
     const raw = localStorage.getItem(LOCAL_STORAGE_ALL_USERS_KEY);
     if (raw) {
       try {
-        const users = JSON.parse(raw) as UserProfile[];
-        if (Array.isArray(users) && users.length > 0) return users;
+        const parsed = JSON.parse(raw) as UserProfile[];
+        if (Array.isArray(parsed)) localUsers = parsed;
       } catch {
         // Ignore corrupt storage
       }
     }
-    localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(INITIAL_LEAGUE_USERS));
-    return INITIAL_LEAGUE_USERS;
+
+    const normalizeUser = (user: Partial<UserProfile> & { $id: string }): UserProfile => ({
+      $id: user.$id,
+      name: typeof user.name === 'string' && user.name.trim() ? user.name : user.nickname || 'Unnamed User',
+      nickname: typeof user.nickname === 'string' ? user.nickname : undefined,
+      email: typeof user.email === 'string' ? user.email : '',
+      role: user.role || 'player',
+      suitIcon: toSuitIcon(user.suitIcon),
+      isMember: user.isMember ?? true,
+      totalPoints: Number(user.totalPoints || 0),
+      careerWins: Number(user.careerWins || 0),
+      careerKOs: Number(user.careerKOs || 0),
+      gamesPlayed: Number(user.gamesPlayed || 0),
+      highHandBadges: Number(user.highHandBadges || 0),
+      hasDgCarryover: Boolean(user.hasDgCarryover),
+      leagueId: user.leagueId || 'league_1',
+    });
+
+    const base = dbUsers.length > 0 ? dbUsers : INITIAL_LEAGUE_USERS;
+    const byId = new Map<string, UserProfile>();
+    const seenEmails = new Set<string>();
+
+    for (const rawUser of base) {
+      if (!rawUser || !rawUser.$id) continue;
+      const user = normalizeUser(rawUser);
+      byId.set(user.$id, user);
+      if (user.email) seenEmails.add(user.email.toLowerCase());
+    }
+
+    for (const rawLocal of localUsers) {
+      if (!rawLocal || !rawLocal.$id) continue;
+      const localUser = normalizeUser(rawLocal);
+      const existing = byId.get(localUser.$id);
+      if (existing) {
+        // Keep local role override if user was updated locally
+        byId.set(localUser.$id, { ...existing, role: localUser.role || existing.role });
+      } else if (!localUser.email || !seenEmails.has(localUser.email.toLowerCase())) {
+        byId.set(localUser.$id, localUser);
+        if (localUser.email) seenEmails.add(localUser.email.toLowerCase());
+      }
+    }
+
+    const merged = Array.from(byId.values());
+    try {
+      localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(merged));
+    } catch {
+      // Ignore storage errors
+    }
+    return merged;
   }
 
   /**
-   * Update a specific user's role (Manager capability)
+   * Update a specific user's role (Manager capability) and persist to DB
    */
   static async updateUserRole(
     userId: string,
@@ -545,6 +600,15 @@ export class AuthService {
     const users = await this.getAllUsers();
     const updated = users.map((u) => (u.$id === userId ? { ...u, role: newRole } : u));
     localStorage.setItem(LOCAL_STORAGE_ALL_USERS_KEY, JSON.stringify(updated));
+
+    const targetUser = updated.find((u) => u.$id === userId);
+    if (targetUser) {
+      try {
+        await AppwriteService.upsertPlayerProfile(targetUser);
+      } catch {
+        // Offline fallback already saved locally
+      }
+    }
 
     // If updating currently logged in user
     if (currentAuthUser && currentAuthUser.$id === userId) {

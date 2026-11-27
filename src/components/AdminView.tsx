@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { Game, Venue, UserProfile, UserRole, Season, TournamentEvent, League } from '@/types/holdem';
+import type { Announcement, Game, Venue, Player, UserProfile, UserRole, Season, TournamentEvent, League } from '@/types/holdem';
 import { AppwriteService } from '@/services/appwriteService';
 import { AuthService } from '@/services/authService';
 import { EventScheduleModal } from './EventScheduleModal';
@@ -38,14 +38,19 @@ interface AdminViewProps {
   games: Game[];
   venues: Venue[];
   seasons: Season[];
+  players?: Player[];
   events?: TournamentEvent[];
   leagues?: League[];
+  announcements?: Announcement[];
   currentUser: UserProfile | null;
   onGamesChange: (games: Game[]) => void;
   onVenuesChange: (venues: Venue[]) => void;
   onSeasonsChange: (seasons: Season[]) => void;
+  onPlayersChange?: (players: Player[]) => void;
   onEventsChange?: (events: TournamentEvent[]) => void;
   onLeaguesChange?: (leagues: League[]) => void;
+  onEditAnnouncement?: (announcement: Announcement) => void;
+  onCreateAnnouncement?: () => void;
   onRoleChange: (role: UserRole) => void;
   onSelectGame?: (game: Game) => void;
   onBack?: () => void;
@@ -56,13 +61,18 @@ export const AdminView: React.FC<AdminViewProps> = ({
   games,
   venues,
   seasons,
+  players = [],
   events = [],
   leagues: initialLeagues = [],
+  announcements = [],
   currentUser,
   onGamesChange,
   onVenuesChange,
   onSeasonsChange,
+  onPlayersChange,
   onLeaguesChange,
+  onEditAnnouncement,
+  onCreateAnnouncement,
   onRoleChange,
   onSelectGame,
   onBack,
@@ -74,6 +84,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [gameToEdit, setGameToEdit] = useState<Game | null>(null);
   const [isVenueModalOpen, setIsVenueModalOpen] = useState(false);
+  const [venueToEdit, setVenueToEdit] = useState<Venue | null>(null);
   const [isSeasonModalOpen, setIsSeasonModalOpen] = useState(false);
   const [isInviteUserOpen, setIsInviteUserOpen] = useState(false);
   const [isLeagueModalOpen, setIsLeagueModalOpen] = useState(false);
@@ -81,7 +92,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
   // Leagues & Users state
   const [leagues, setLeagues] = useState<League[]>(initialLeagues);
-  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>(players);
   const [successMsg, setSuccessMsg] = useState('');
 
   // Filters
@@ -100,8 +111,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
   }, [initialLeagues]);
 
   useEffect(() => {
-    AuthService.getAllUsers().then(setUsers);
-  }, []);
+    let active = true;
+    AuthService.getAllUsers().then((loaded) => {
+      if (active) setUsers(loaded);
+    });
+    return () => {
+      active = false;
+    };
+  }, [players]);
 
   const showToast = (msg: string) => {
     setSuccessMsg(msg);
@@ -136,6 +153,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     if (targetUser && targetUser.role !== 'manager' && targetUser.role !== 'admin') {
       const updatedUsers = await AuthService.updateUserRole(manager.id, 'manager', currentUser);
       setUsers(updatedUsers);
+      if (onPlayersChange) onPlayersChange(updatedUsers);
     }
     showToast(`Designated ${manager.name} as League Manager.`);
   };
@@ -164,6 +182,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
     const updated = await AuthService.updateUserRole(userId, newRole, currentUser);
     setUsers(updated);
+    if (onPlayersChange) onPlayersChange(updated);
     if (currentUser && currentUser.$id === userId) {
       onRoleChange(newRole);
     }
@@ -187,11 +206,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
     const updated = await AuthService.deleteUser(userId);
     setUsers(updated);
+    if (onPlayersChange) onPlayersChange(updated);
     showToast(`User "${userName}" has been removed.`);
   };
 
   const handleUserCreated = (newUser: UserProfile) => {
-    setUsers((prev) => [newUser, ...prev]);
+    const nextUsers = [newUser, ...users];
+    setUsers(nextUsers);
+    if (onPlayersChange) onPlayersChange(nextUsers);
     showToast(`Added user "${newUser.name}" as ${newUser.role.toUpperCase()}`);
   };
 
@@ -217,10 +239,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
   });
 
   const filteredUsers = users.filter((u) => {
+    const query = searchUserQuery.toLowerCase();
     const matchesSearch =
-      u.name.toLowerCase().includes(searchUserQuery.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchUserQuery.toLowerCase());
-    const matchesRole = selectedRoleFilter === 'all' || u.role === selectedRoleFilter;
+      (u.name || '').toLowerCase().includes(query) ||
+      (u.email || '').toLowerCase().includes(query);
+    const matchesRole = selectedRoleFilter === 'all' || (u.role || 'player') === selectedRoleFilter;
     return matchesSearch && matchesRole;
   });
 
@@ -331,6 +354,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           venues={venues}
           games={games}
           users={users}
+          announcements={announcements}
           onOpenSection={setActiveTab}
           onCreateGame={() => {
             setGameToEdit(null);
@@ -348,6 +372,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
             setIsScheduleModalOpen(true);
           }}
           onSelectGame={onSelectGame}
+          onEditAnnouncement={onEditAnnouncement}
+          onCreateAnnouncement={onCreateAnnouncement}
         />
       )}
 
@@ -381,7 +407,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
         <AdminVenuesSection
           venues={venues}
           games={games}
-          onOpenVenueModal={() => setIsVenueModalOpen(true)}
+          onOpenVenueModal={(venue) => {
+            setVenueToEdit(venue || null);
+            setIsVenueModalOpen(true);
+          }}
         />
       )}
 
@@ -439,6 +468,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         gameToEdit={gameToEdit}
         venues={venues}
         seasons={seasons}
+        players={users.length > 0 ? users : players}
         defaultSeasonId={selectedScheduleSeason !== 'all' ? selectedScheduleSeason : activeSeason?.$id}
         onGameSaved={(savedGame) => {
           if (gameToEdit) {
@@ -459,12 +489,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
         }}
       />
 
-      <VenueManagerModal
-        isOpen={isVenueModalOpen}
-        onClose={() => setIsVenueModalOpen(false)}
-        venues={venues}
-        onVenuesChange={onVenuesChange}
-      />
+      {isVenueModalOpen && (
+        <VenueManagerModal
+          key={venueToEdit?.$id ?? 'venues-hub'}
+          isOpen={isVenueModalOpen}
+          onClose={() => {
+            setIsVenueModalOpen(false);
+            setVenueToEdit(null);
+          }}
+          venues={venues}
+          onVenuesChange={onVenuesChange}
+          initialVenueToEdit={venueToEdit}
+        />
+      )}
 
       <SeasonManagerModal
         isOpen={isSeasonModalOpen}

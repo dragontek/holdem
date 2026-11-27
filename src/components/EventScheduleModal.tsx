@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import type { Game, Venue, Season, PointMultiplier } from '../types/holdem';
+import type { Game, GameStatus, Player, Venue, Season, PointMultiplier } from '../types/holdem';
 import { AppwriteService } from '../services/appwriteService';
 import { OFFICIAL_BLIND_SCHEDULE } from '@/lib/scoring';
-import { 
-  Calendar, 
-  Coins, 
-  X, 
-  Check, 
+import { StaffMultiSelect } from './StaffMultiSelect';
+import {
+  Calendar,
+  Coins,
+  X,
+  Check,
   AlertCircle,
   RotateCcw,
   Sparkles,
   Award,
-  Sun
+  Sun,
+  Users,
 } from 'lucide-react';
 
 interface EventScheduleModalProps {
@@ -20,10 +22,17 @@ interface EventScheduleModalProps {
   gameToEdit?: Game | null;
   venues: Venue[];
   seasons: Season[];
+  players?: Player[];
   defaultSeasonId?: string;
   onGameSaved: (game: Game) => void;
   onGamesSaved?: (games: Game[]) => void;
   onGameDeleted?: (gameId: string) => void;
+}
+
+function getInitialDealers(game?: Game | null): string[] {
+  if (!game) return [];
+  if (game.dealers && game.dealers.length > 0) return game.dealers;
+  return game.dealerName ? [game.dealerName] : [];
 }
 
 const DAYS_OF_WEEK = [
@@ -125,6 +134,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
   gameToEdit,
   venues,
   seasons,
+  players = [],
   defaultSeasonId,
   onGameSaved,
   onGamesSaved,
@@ -148,14 +158,14 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
     venueId: gameToEdit?.venueId || defaultVenueId,
     seasonId: gameToEdit?.seasonId || initialSeasonId,
     scheduledAt: gameToEdit?.scheduledAt || new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-    dealerName: gameToEdit?.dealerName || 'House Dealer',
-    scribesText: (gameToEdit?.scribes || []).join(', '),
+    dealers: getInitialDealers(gameToEdit),
+    scribes: gameToEdit?.scribes || [],
     pointMultiplier: (gameToEdit?.pointMultiplier ?? 1) as PointMultiplier,
     isDayGame: Boolean(gameToEdit?.isDayGame),
     hodRule: gameToEdit?.hodRule || '',
     hotHandDescription: gameToEdit?.hotHandDescription || '',
     startingChips: gameToEdit?.startingChips ?? 15000,
-    status: gameToEdit?.status || 'scheduled',
+    status: (gameToEdit?.status || 'scheduled') as GameStatus,
   });
 
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -169,14 +179,14 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
         venueId: gameToEdit?.venueId || venues[0]?.$id || '',
         seasonId: targetSeasonId,
         scheduledAt: gameToEdit?.scheduledAt || new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-        dealerName: gameToEdit?.dealerName || 'House Dealer',
-        scribesText: (gameToEdit?.scribes || []).join(', '),
+        dealers: getInitialDealers(gameToEdit),
+        scribes: gameToEdit?.scribes || [],
         pointMultiplier: (gameToEdit?.pointMultiplier ?? 1) as PointMultiplier,
         isDayGame: Boolean(gameToEdit?.isDayGame),
         hodRule: gameToEdit?.hodRule || '',
         hotHandDescription: gameToEdit?.hotHandDescription || '',
         startingChips: gameToEdit?.startingChips ?? 15000,
-        status: gameToEdit?.status || 'scheduled',
+        status: (gameToEdit?.status || 'scheduled') as GameStatus,
       });
       if (gameToEdit?.isRecurring) {
         setScheduleType('single');
@@ -212,14 +222,9 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
 
     try {
       const selectedVenue = venues.find((v) => v.$id === formData.venueId);
-      const parsedScribes = formData.scribesText
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const parsedDealers = formData.dealerName
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const parsedDealers = formData.dealers;
+      const parsedScribes = formData.scribes;
+      const primaryDealer = parsedDealers[0] || '';
 
       // CASE 1: Updating an existing event
       if (isEditing && gameToEdit) {
@@ -229,7 +234,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
           venueName: selectedVenue?.name || gameToEdit.venueName,
           seasonId: formData.seasonId,
           scheduledAt: formData.scheduledAt,
-          dealerName: parsedDealers[0] || formData.dealerName,
+          dealerName: primaryDealer,
           dealers: parsedDealers,
           scribes: parsedScribes,
           pointMultiplier: formData.pointMultiplier,
@@ -241,7 +246,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
           addonAmount: 0,
           startingChips: Number(formData.startingChips),
           hotHandJackpot: 0,
-          status: formData.status as any,
+          status: formData.status,
         });
 
         if (success) {
@@ -251,14 +256,14 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
             venueId: formData.venueId,
             seasonId: formData.seasonId,
             scheduledAt: formData.scheduledAt,
-            dealerName: parsedDealers[0] || formData.dealerName,
+            dealerName: primaryDealer,
             dealers: parsedDealers,
             scribes: parsedScribes,
             pointMultiplier: formData.pointMultiplier,
             isDayGame: formData.isDayGame,
             hodRule: formData.hodRule.trim(),
             hotHandDescription: formData.hotHandDescription.trim(),
-            status: formData.status as any,
+            status: formData.status,
             venueName: selectedVenue?.name || gameToEdit.venueName,
             buyinAmount: 0,
             rebuyAmount: 0,
@@ -306,7 +311,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
             venueName: selectedVenue?.name || 'Selected Venue',
             seasonId: formData.seasonId,
             scheduledAt: dateItem.displayStr,
-            dealerName: parsedDealers[0] || formData.dealerName,
+            dealerName: primaryDealer,
             dealers: parsedDealers,
             scribes: parsedScribes,
             pointMultiplier: formData.pointMultiplier,
@@ -368,7 +373,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
         venueName: selectedVenue?.name || 'Selected Venue',
         seasonId: formData.seasonId,
         scheduledAt: formData.scheduledAt,
-        dealerName: parsedDealers[0] || formData.dealerName,
+        dealerName: primaryDealer,
         dealers: parsedDealers,
         scribes: parsedScribes,
         pointMultiplier: formData.pointMultiplier,
@@ -398,8 +403,8 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
       });
 
       onClose();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Error saving event');
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Error saving event');
     } finally {
       setIsSaving(false);
     }
@@ -415,8 +420,8 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
       await AppwriteService.deleteGame(gameToEdit.$id);
       onGameDeleted(gameToEdit.$id);
       onClose();
-    } catch (err: any) {
-      alert(`Could not delete game: ${err.message || err}`);
+    } catch (err: unknown) {
+      alert(`Could not delete game: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -626,7 +631,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
                   </label>
                   <select
                     value={recurringScope}
-                    onChange={(e) => setRecurringScope(e.target.value as any)}
+                    onChange={(e) => setRecurringScope(e.target.value as 'season' | 'weeks')}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-400"
                   >
                     <option value="season">Through End of Season ({selectedSeason?.name || 'Active'})</option>
@@ -684,31 +689,43 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
               </div>
             </div>
           ) : (
-            /* Single Event Date & Dealer Input */
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-[11px] font-semibold text-slate-300 block mb-1">Date &amp; Time *</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Thu, Oct 22 • 7:00 PM"
-                  value={formData.scheduledAt}
-                  onChange={(e) => setFormData({ ...formData, scheduledAt: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-slate-300 block mb-1">Assigned Dealer / TD</label>
-                <input
-                  type="text"
-                  placeholder="House Dealer"
-                  value={formData.dealerName}
-                  onChange={(e) => setFormData({ ...formData, dealerName: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-400"
-                />
-              </div>
+            /* Single Event Date & Time */
+            <div>
+              <label className="text-[11px] font-semibold text-slate-300 block mb-1">Date &amp; Time *</label>
+              <input
+                type="text"
+                placeholder="e.g. Thu, Oct 22 • 7:00 PM"
+                value={formData.scheduledAt}
+                onChange={(e) => setFormData({ ...formData, scheduledAt: e.target.value })}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-400"
+              />
             </div>
           )}
+
+          {/* Assigned Staff (Database Dealer & Scribe Accounts) */}
+          <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+            <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5" /> Assigned Staff (Database Accounts)
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <StaffMultiSelect
+                id="schedule-dealers"
+                label="Assigned Dealer(s)"
+                role="dealer"
+                accounts={players}
+                selectedNames={formData.dealers}
+                onChange={(nextDealers) => setFormData({ ...formData, dealers: nextDealers })}
+              />
+              <StaffMultiSelect
+                id="schedule-scribes"
+                label="Assigned Scribe(s)"
+                role="scribe"
+                accounts={players}
+                selectedNames={formData.scribes}
+                onChange={(nextScribes) => setFormData({ ...formData, scribes: nextScribes })}
+              />
+            </div>
+          </div>
 
           {/* League Scoring & Session Modifiers */}
           <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
@@ -754,7 +771,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] text-slate-400 block mb-1">Hand of the Day (HOD)</label>
                 <input
@@ -773,17 +790,6 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
                   placeholder="e.g. 2/10 Boat"
                   value={formData.hotHandDescription}
                   onChange={(e) => setFormData({ ...formData, hotHandDescription: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Assigned Scribe(s)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Kyle, Chip"
-                  value={formData.scribesText}
-                  onChange={(e) => setFormData({ ...formData, scribesText: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"
                 />
               </div>
@@ -814,7 +820,7 @@ export const EventScheduleModal: React.FC<EventScheduleModalProps> = ({
               <label className="text-[11px] font-semibold text-slate-300 block mb-1">Event Status</label>
               <select
                 value={formData.status}
-                onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value as GameStatus })}
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-400 font-bold"
               >
                 <option value="scheduled">Scheduled (Upcoming)</option>

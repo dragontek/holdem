@@ -78,6 +78,39 @@ export const SHOW_UP_POINTS = 600;
 export const NO_GAME_SHOW_UP_POINTS = 5000;
 export const SURVIVOR_POINTS = 500;
 
+/**
+ * Show Up points (+600 base) are awarded automatically at the 1:15 mark:
+ * right after Break 1 (index 3) and the first blind of Hour 2 (5k/10k, index 4),
+ * i.e. when the clock reaches index 5 (10k/20k) or once the game is completed.
+ */
+export const SHOW_UP_CUTOFF_LEVEL_INDEX = 5;
+
+export type ScoringGameContext = Pick<
+  Game,
+  'pointMultiplier' | 'isDayGame' | 'noGamePlayed'
+> & {
+  status?: Game['status'];
+  currentLevelIndex?: number;
+};
+
+export function hasReachedShowUpCutoff(
+  game: Pick<ScoringGameContext, 'status' | 'currentLevelIndex'>
+): boolean {
+  if (game.status === 'completed') return true;
+  if (typeof game.currentLevelIndex === 'number') {
+    return game.currentLevelIndex >= SHOW_UP_CUTOFF_LEVEL_INDEX;
+  }
+  return true;
+}
+
+export function isShowUpAwarded(
+  entry: Pick<GameEntry, 'showUpAwarded'>,
+  game: Pick<ScoringGameContext, 'status' | 'currentLevelIndex'>
+): boolean {
+  if (typeof entry.showUpAwarded === 'boolean') return entry.showUpAwarded;
+  return hasReachedShowUpCutoff(game);
+}
+
 export const PLACEMENT_POINTS: Readonly<Record<number, number>> = {
   1: 12000,
   2: 5000,
@@ -284,7 +317,7 @@ export function formatOrdinal(position: number): string {
  */
 export function calculateEntryScore(
   entry: GameEntry,
-  game: Pick<Game, 'pointMultiplier' | 'isDayGame' | 'noGamePlayed'>
+  game: ScoringGameContext
 ): EntryScoreBreakdown {
   const status = getEntryStatus(entry);
   const isMucked = status === 'MUCK';
@@ -323,7 +356,8 @@ export function calculateEntryScore(
   const totalMultiplier = sessionMultiplier * dgMultiplier;
   const effectiveMultiplier = isMucked ? 0 : totalMultiplier;
 
-  const showUpPoints = SHOW_UP_POINTS;
+  const showUpEligible = isShowUpAwarded(entry, game);
+  const showUpPoints = showUpEligible ? SHOW_UP_POINTS : 0;
   const placementPoints = getPlacementPoints(entry.finishPosition);
 
   const knockouts = getEntryKnockouts(entry);
@@ -335,7 +369,11 @@ export function calculateEntryScore(
   const lineItems: ScoreLineItem[] = [
     {
       category: 'attendance',
-      label: 'Show Up Points',
+      label: showUpEligible
+        ? 'Show Up Points (1:15 Mark)'
+        : entry.showUpAwarded === false
+        ? 'Show Up Points (Seated After 1:15 Cutoff)'
+        : 'Show Up Points (Unlocks at 1:15 Mark)',
       basePoints: showUpPoints,
       finalPoints: showUpPoints * effectiveMultiplier,
     },
@@ -436,7 +474,7 @@ export function calculateEntryScore(
  */
 export function computeFinalizationResults(
   entries: GameEntry[],
-  game: Pick<Game, 'pointMultiplier' | 'isDayGame' | 'noGamePlayed'>,
+  game: ScoringGameContext,
   remainingPlacements?: Record<string, number>
 ): FinalizedEntryResult[] {
   const activeEntries = entries.filter((e) => getEntryStatus(e) === 'ACTIVE');
@@ -561,7 +599,7 @@ export function auditKnockouts(entries: GameEntry[]): KnockoutAuditSummary {
 
 export function syncEntryCalculatedFields(
   entry: GameEntry,
-  game: Pick<Game, 'pointMultiplier' | 'isDayGame' | 'noGamePlayed'>
+  game: ScoringGameContext
 ): GameEntry {
   const knockouts = getEntryKnockouts(entry);
   const breakdown = calculateEntryScore(entry, game);

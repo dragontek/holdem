@@ -7,6 +7,8 @@ import {
   getEntryStatus,
   HAND_BONUS_CODE_LIST,
   HAND_BONUS_DEFINITIONS,
+  hasReachedShowUpCutoff,
+  isShowUpAwarded,
   KO_CODE_LIST,
   KO_DEFINITIONS,
 } from '@/lib/scoring';
@@ -473,40 +475,89 @@ export const PlayerScoreDialog: React.FC<PlayerScoreDialogProps> = ({
 
             <div className="space-y-2">
               {!isNoGame && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateEntry(entry.$id, { hasDgCarryover: !entry.hasDgCarryover })
-                  }
-                  className={`w-full min-h-[56px] px-4 py-3 rounded-xl border text-left transition-colors flex items-center justify-between gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
-                    entry.hasDgCarryover
-                      ? 'bg-indigo-500/20 border-indigo-500/60 text-white'
-                      : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Sun
-                      className={`w-5 h-5 shrink-0 ${
-                        entry.hasDgCarryover ? 'text-indigo-300' : 'text-slate-500'
-                      }`}
-                    />
-                    <div>
-                      <div className="text-sm font-bold text-white">Day Game (DG) 2x Carryover</div>
-                      <div className="text-xs text-slate-300">
-                        Doubles this player&apos;s session multiplier (up to 6x)
+                <>
+                  {(() => {
+                    const showUpOn = isShowUpAwarded(entry, game);
+                    const pastCutoff = hasReachedShowUpCutoff(game);
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateEntry(entry.$id, { showUpAwarded: !showUpOn })
+                        }
+                        className={`w-full min-h-[56px] px-4 py-3 rounded-xl border text-left transition-colors flex items-center justify-between gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
+                          showUpOn
+                            ? 'bg-emerald-500/15 border-emerald-500/50 text-white'
+                            : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Award
+                            className={`w-5 h-5 shrink-0 ${
+                              showUpOn ? 'text-emerald-400' : 'text-slate-500'
+                            }`}
+                          />
+                          <div>
+                            <div className="text-sm font-bold text-white">Show Up Points (+600)</div>
+                            <div className="text-xs text-slate-300">
+                              {showUpOn
+                                ? 'Awarded — Seated by the 1:15 mark (after Break 1 & Hour 2 Level 1)'
+                                : pastCutoff
+                                ? 'Seated after 1:15 cutoff — Tap to grant manually'
+                                : 'Auto-awarded at the 1:15 mark — Tap to grant early'}
+                            </div>
+                          </div>
+                        </div>
+                        <Badge variant={showUpOn ? 'success' : 'secondary'}>
+                          {showUpOn ? (
+                            <>
+                              <Check className="w-3 h-3" /> +600
+                            </>
+                          ) : pastCutoff ? (
+                            'OFF'
+                          ) : (
+                            '1:15'
+                          )}
+                        </Badge>
+                      </button>
+                    );
+                  })()}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateEntry(entry.$id, { hasDgCarryover: !entry.hasDgCarryover })
+                    }
+                    className={`w-full min-h-[56px] px-4 py-3 rounded-xl border text-left transition-colors flex items-center justify-between gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
+                      entry.hasDgCarryover
+                        ? 'bg-indigo-500/20 border-indigo-500/60 text-white'
+                        : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Sun
+                        className={`w-5 h-5 shrink-0 ${
+                          entry.hasDgCarryover ? 'text-indigo-300' : 'text-slate-500'
+                        }`}
+                      />
+                      <div>
+                        <div className="text-sm font-bold text-white">Day Game (DG) 2x Carryover</div>
+                        <div className="text-xs text-slate-300">
+                          Doubles this player&apos;s session multiplier (up to 6x)
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <Badge variant={entry.hasDgCarryover ? 'indigo' : 'secondary'}>
-                    {entry.hasDgCarryover ? (
-                      <>
-                        <Check className="w-3 h-3" /> 2x ON
-                      </>
-                    ) : (
-                      'OFF'
-                    )}
-                  </Badge>
-                </button>
+                    <Badge variant={entry.hasDgCarryover ? 'indigo' : 'secondary'}>
+                      {entry.hasDgCarryover ? (
+                        <>
+                          <Check className="w-3 h-3" /> 2x ON
+                        </>
+                      ) : (
+                        'OFF'
+                      )}
+                    </Badge>
+                  </button>
+                </>
               )}
 
               <button

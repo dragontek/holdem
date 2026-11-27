@@ -166,7 +166,7 @@ export const InfoView: React.FC<InfoViewProps> = ({ venues, seasonName }) => {
               <CardContent className="space-y-2">
                 <div className="text-2xl font-black text-white">+{SHOW_UP_POINTS.toLocaleString()} base</div>
                 <p className="text-xs text-slate-400">
-                  Awarded automatically to all active, non-mucked tournament participants.
+                  Awarded automatically to any non-mucked player seated by the <strong className="text-slate-200">1:15 mark</strong> (after Break 1 and the first blind of Hour 2).
                 </p>
               </CardContent>
             </Card>

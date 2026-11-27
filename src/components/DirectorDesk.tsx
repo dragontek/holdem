@@ -14,7 +14,9 @@ import {
   calculateEntryScore,
   formatBlindInThousands,
   getEntryStatus,
+  hasReachedShowUpCutoff,
   PLACEMENT_POINTS,
+  SHOW_UP_CUTOFF_LEVEL_INDEX,
   syncEntryCalculatedFields,
   type FinalizedEntryResult,
 } from '@/lib/scoring';
@@ -111,13 +113,42 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
   const activeGameRef = useRef<Game>(activeGame);
   const onUpdateGameRef = useRef(onUpdateGame);
+  const gameEntriesRef = useRef<GameEntry[]>(gameEntries);
+  const onEntriesChangeRef = useRef(onEntriesChange);
   const levelIndexRef = useRef<number>(currentLevelIndex);
   const secondsLeftRef = useRef<number>(secondsLeft);
 
   useEffect(() => {
     activeGameRef.current = activeGame;
     onUpdateGameRef.current = onUpdateGame;
+    gameEntriesRef.current = gameEntries;
+    onEntriesChangeRef.current = onEntriesChange;
   });
+
+  const applyShowUpCutoffIfReached = (prevLevelIdx: number, nextGame: Game) => {
+    const nextLevelIdx = nextGame.currentLevelIndex;
+    if (
+      prevLevelIdx < SHOW_UP_CUTOFF_LEVEL_INDEX &&
+      nextLevelIdx >= SHOW_UP_CUTOFF_LEVEL_INDEX
+    ) {
+      const updatedEntries = gameEntriesRef.current.map((entry) => {
+        const awarded = entry.showUpAwarded === false ? false : true;
+        return syncEntryCalculatedFields({ ...entry, showUpAwarded: awarded }, nextGame);
+      });
+      gameEntriesRef.current = updatedEntries;
+      onEntriesChangeRef.current(updatedEntries);
+      void Promise.all(
+        updatedEntries.map((entry) =>
+          AppwriteService.updateGameEntryScoring(entry.$id, {
+            showUpAwarded: entry.showUpAwarded,
+            calculatedBasePoints: entry.calculatedBasePoints,
+            calculatedFinalPoints: entry.calculatedFinalPoints,
+            pointsAwarded: entry.pointsAwarded,
+          })
+        )
+      );
+    }
+  };
 
   useEffect(() => {
     levelIndexRef.current = currentLevelIndex;
@@ -164,12 +195,14 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
         secondsLeftRef.current = nextSecs;
         setCurrentLevelIndex(nextIdx);
         setSecondsLeft(nextSecs);
-        onUpdateGameRef.current({
+        const nextGame: Game = {
           ...game,
           currentLevelIndex: nextIdx,
           secondsRemainingInLevel: nextSecs,
           status: 'running',
-        });
+        };
+        onUpdateGameRef.current(nextGame);
+        applyShowUpCutoffIfReached(lvlIdx, nextGame);
         void AppwriteService.updateGameClock(game.$id, nextIdx, nextSecs);
       } else {
         secondsLeftRef.current = 0;
@@ -216,15 +249,18 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   const handleSkipLevel = () => {
     if (!canManageClock) return;
     if (currentLevelIndex < activeGame.blindSchedule.length - 1) {
+      const prevIdx = currentLevelIndex;
       const nextIdx = currentLevelIndex + 1;
       const nextSecs = activeGame.blindSchedule[nextIdx].durationMinutes * 60;
       setCurrentLevelIndex(nextIdx);
       setSecondsLeft(nextSecs);
-      onUpdateGame({
+      const nextGame: Game = {
         ...activeGame,
         currentLevelIndex: nextIdx,
         secondsRemainingInLevel: nextSecs,
-      });
+      };
+      onUpdateGame(nextGame);
+      applyShowUpCutoffIfReached(prevIdx, nextGame);
       AppwriteService.updateGameClock(activeGame.$id, nextIdx, nextSecs);
     }
   };
@@ -286,11 +322,18 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
     const updatedEntries = [...gameEntries, createdEntry];
     onEntriesChange(updatedEntries);
 
+    const totalPlayersCount = updatedEntries.length;
+    const remainingPlayersCount = updatedEntries.filter((e) => getEntryStatus(e) === 'ACTIVE').length;
+    const totalEntriesCount = updatedEntries.reduce(
+      (sum, e) => sum + (e.buyinsCount || 1) + (e.rebuysCount || 0),
+      0
+    );
+
     onUpdateGame({
       ...activeGame,
-      totalPlayersCount: activeGame.totalPlayersCount + 1,
-      remainingPlayersCount: activeGame.remainingPlayersCount + 1,
-      totalEntriesCount: activeGame.totalEntriesCount + 1,
+      totalPlayersCount,
+      remainingPlayersCount,
+      totalEntriesCount,
     });
   };
 
@@ -300,16 +343,19 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
     const nextRebuys = Math.max(0, entry.rebuysCount + delta);
     if (nextRebuys === entry.rebuysCount) return;
 
-    onEntriesChange(
-      gameEntries.map((e) => (e.$id === entryId ? { ...e, rebuysCount: nextRebuys } : e))
+    const updatedEntries = gameEntries.map((e) =>
+      e.$id === entryId ? { ...e, rebuysCount: nextRebuys } : e
     );
+    onEntriesChange(updatedEntries);
 
-    if (delta > 0) {
-      onUpdateGame({
-        ...activeGame,
-        totalEntriesCount: activeGame.totalEntriesCount + 1,
-      });
-    }
+    const totalEntriesCount = updatedEntries.reduce(
+      (sum, e) => sum + (e.buyinsCount || 1) + (e.rebuysCount || 0),
+      0
+    );
+    onUpdateGame({
+      ...activeGame,
+      totalEntriesCount,
+    });
 
     await AppwriteService.updatePlayerRebuys(activeGame.$id, entryId, nextRebuys, activeGame);
   };
@@ -572,6 +618,7 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
             <>
               <SessionRulesBar
                 game={activeGame}
+                players={players}
                 canEdit={canEditScorecard}
                 onUpdateSessionRules={handleUpdateSessionRules}
               />
@@ -602,8 +649,18 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
           {/* Interactive Blind Clock Console */}
           <div className="glass-card rounded-2xl p-6 border border-slate-800 space-y-6">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1">
-                <Sparkles className="w-4 h-4" /> LEVEL {currentLevel.level} {currentLevel.isBreak && '(BREAK)'}
+              <span className="text-xs font-bold text-amber-400 uppercase tracking-widest flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1">
+                  <Sparkles className="w-4 h-4" /> LEVEL {currentLevel.level} {currentLevel.isBreak && '(BREAK)'}
+                </span>
+                <Badge
+                  variant={hasReachedShowUpCutoff(activeGame) ? 'success' : 'secondary'}
+                  className="text-[10px] font-bold tracking-normal normal-case"
+                >
+                  {hasReachedShowUpCutoff(activeGame)
+                    ? 'Show Up (+600) Awarded (1:15 Passed)'
+                    : 'Show Up (+600) Unlocks at 1:15 Mark'}
+                </Badge>
               </span>
 
               <button

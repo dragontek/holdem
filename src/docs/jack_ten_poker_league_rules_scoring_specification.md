@@ -37,7 +37,7 @@ All points earned during a game are first summed as **Base Points** before any s
 ### A. Attendance & Survival
 | Achievement | Symbol / Code | Base Points | Notes |
 | :--- | :---: | :---: | :--- |
-| **Show Up Points** | *(Automatic)* | **600** | Awarded to all active, non-mucked participants. |
+| **Show Up Points** | *(Automatic at 1:15)* | **600** | Awarded automatically to any non-mucked player who has been seated by the **1:15 mark** (after Break 1 and the first blind of Hour 2). |
 | **No-Game Show Up** | *(Session Flag)* | **5,000** | Awarded if a scheduled game does not run due to low turnout. |
 | **Survivor Points** | `☆` *(in HD row)* | **500** | Awarded each time a player goes **all-in** and survives without busting (repeatable). |
 
@@ -116,7 +116,7 @@ All blind amounts below are expressed **in thousands** (e.g., `1/2` = `1,000 / 2
 ### Second Hour — 15-Minute Blinds
 | Level | Blinds (in Thousands) | Small / Big Blind | Duration | Notes |
 | :--- | :---: | :---: | :---: | :--- |
-| **Level 4** | `5 / 10` | `5,000 / 10,000` | **15 min** | Hour 2 |
+| **Level 4** | `5 / 10` | `5,000 / 10,000` | **15 min** | Hour 2 • End of this level is the **1:15 mark** (Show Up `+600` awarded automatically to all seated players) |
 | **Level 5** | `10 / 20` | `10,000 / 20,000` | **15 min** | Hour 2 |
 | **Level 6** | `20 / 40` | `20,000 / 40,000` | **15 min** | Hour 2 |
 | **Level 7** | `40 / 80` | `40,000 / 80,000` | **15 min** | Hour 2 |

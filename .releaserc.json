@@ -1,0 +1,78 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          { "breaking": true, "release": "major" },
+          { "type": "feat", "release": "minor" },
+          { "type": "fix", "release": "patch" },
+          { "type": "perf", "release": "patch" },
+          { "type": "revert", "release": "patch" },
+          { "type": "refactor", "release": "patch" },
+          { "type": "docs", "release": false },
+          { "type": "style", "release": false },
+          { "type": "test", "release": false },
+          { "type": "build", "release": false },
+          { "type": "ci", "release": false },
+          { "type": "chore", "release": false }
+        ]
+      }
+    ],
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "preset": "conventionalcommits",
+        "presetConfig": {
+          "types": [
+            { "type": "feat", "section": "Features" },
+            { "type": "fix", "section": "Bug Fixes" },
+            { "type": "perf", "section": "Performance Improvements" },
+            { "type": "refactor", "section": "Code Refactoring" },
+            { "type": "revert", "section": "Reverts" },
+            { "type": "docs", "section": "Documentation", "hidden": false },
+            { "type": "ci", "section": "CI / Build Pipeline", "hidden": false },
+            { "type": "build", "section": "Build System", "hidden": false },
+            { "type": "style", "section": "Styles", "hidden": true },
+            { "type": "test", "section": "Tests", "hidden": true },
+            { "type": "chore", "section": "Chores", "hidden": true }
+          ]
+        }
+      }
+    ],
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "CHANGELOG.md",
+        "changelogTitle": "# Changelog\n\nAll notable changes to **Jack Ten Poker** are documented in this file. Versions and release notes are generated automatically from Conventional Commits on `main`."
+      }
+    ],
+    [
+      "@semantic-release/npm",
+      {
+        "npmPublish": false
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["CHANGELOG.md", "package.json", "package-lock.json"],
+        "message": "chore(release): v${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "holdem-site.tar.gz",
+            "label": "Jack Ten Poker Site Bundle (v${nextRelease.version})"
+          }
+        ]
+      }
+    ]
+  ]
+}

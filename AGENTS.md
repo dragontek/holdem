@@ -236,7 +236,12 @@ src/
   - `src/components/admin/AdminSchedulesSection.tsx`
   - `src/components/admin/AdminUsersSection.tsx`
 
-### 5.3 UX & Accessibility Standards
+### 5.3 UX, Mobile-First & PWA Standards
+- **Mobile-First, Desktop-Enabled**: Every new screen, modal, form, and toolbar must be designed for 360px–430px phones first, then progressively enhanced for tablet (`md:`) and desktop (`lg:`/`xl:`).
+  - Use `100dvh` (`min-h-[100dvh]`, `max-h-[92dvh]`) instead of `100vh`/`90vh` so mobile address bars and virtual keyboards never clip actions.
+  - Ensure interactive touch targets are at least `44px` tall on mobile (`min-h-[44px]` / `h-11`), stack multi-control toolbars cleanly on small viewports, and keep inputs ≥ `16px` on phones to prevent iOS Safari auto-zoom.
+  - Respect notched/standalone PWA safe-area insets (`env(safe-area-inset-top)` / `env(safe-area-inset-bottom)`) and keep floating overlays clear of the fixed mobile bottom navigation bar (`< lg`).
+  - Maintain installable PWA compliance (`public/manifest.webmanifest`, `public/sw.js` bypassing Appwrite API/realtime endpoints, PNG + maskable icons, and `usePwaInstall` / `PwaStatusBar`).
 - **Keyboard Navigation**: All interactive elements must have visible focus rings (`focus-visible:ring-2 focus-visible:ring-amber-500`).
 - **Semantic HTML**: Use native `<button>` (via shadcn `Button`), `<form>`, `<header>`, and `<section>`. Never attach click handlers to unadorned `<div>` or `<span>` elements.
 - **Empty States**: Every list (tournaments, venues, players) must provide a clean empty state with an icon, explanation, and an action button.
@@ -264,3 +269,17 @@ npm run bundle:site
 2. Did I keep file lengths manageable (< 300 lines) rather than ballooning existing files?
 3. Did I maintain graceful Appwrite offline/mock fallbacks?
 4. Does the UI look like a crisp, professional sports/poker application rather than saturated "AI slop"?
+
+---
+
+## 7. Git Branching, Conventional Commits & Semantic Releases
+
+- **Primary Development Branch**: `develop` (all day-to-day feature/fix commits and PRs target `develop`).
+- **Production Release Branch**: `main` (updated by promoting/merging `develop` into `main`).
+- **Conventional Commits (Required)**: Every commit message and PR title MUST follow `<type>(<optional-scope>)[!]: <description>`:
+  - `feat:` → triggers **Minor** release (`v1.X.0`)
+  - `fix:`, `perf:`, `refactor:`, `revert:` → triggers **Patch** release (`v1.x.X`)
+  - `feat!:` / `BREAKING CHANGE:` → triggers **Major** release (`vX.0.0`)
+  - `docs:`, `ci:`, `build:`, `style:`, `test:`, `chore:` → no version bump unless paired with a release commit
+- **Local Hook**: Run `npm run hooks:install` once per clone to enable `.githooks/commit-msg`.
+- **Automated Releases**: Merging `develop` into `main` runs `.github/workflows/release.yml` (`semantic-release` via `.releaserc.json`), which verifies lint/build/bundle, computes the next `v1.x.x` tag, generates `CHANGELOG.md` and GitHub Release Notes from commits, attaches `holdem-site.tar.gz`, and syncs the release commit back to `develop`.

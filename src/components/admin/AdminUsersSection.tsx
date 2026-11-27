@@ -35,17 +35,11 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
     <div className="space-y-4">
       <Card className="p-5 border-slate-800 bg-slate-900/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <Badge variant="indigo" className="text-[10px]">
-              STEP 4: PERSONNEL
-            </Badge>
-            <span className="text-xs text-slate-400">Roles &amp; Access</span>
-          </div>
-          <h2 className="text-lg font-black text-white flex items-center gap-2 mt-1">
-            <Users className="w-5 h-5 text-indigo-400" /> Users &amp; Staff Role Management ({users.length})
+          <h2 className="text-lg font-black text-white flex items-center gap-2">
+            <Users className="w-5 h-5 text-indigo-400" /> Users &amp; Staff ({users.length})
           </h2>
           <p className="text-xs text-slate-400">
-            Assign and modify roles (Manager, Dealer, Scribe, Player) for league personnel.
+            Assign and update roles (Admin, Manager, Dealer, Scribe, Player).
           </p>
         </div>
 

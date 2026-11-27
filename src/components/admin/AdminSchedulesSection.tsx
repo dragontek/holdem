@@ -50,17 +50,11 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
     <div className="space-y-4">
       <Card className="p-5 border-slate-800 bg-slate-900/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <Badge variant="default" className="text-[10px]">
-              STEP 3: EVENTS &amp; GAMES
-            </Badge>
-            <span className="text-xs text-slate-400">Events within Championship Seasons</span>
-          </div>
-          <h2 className="text-lg font-black text-white flex items-center gap-2 mt-1">
-            <Calendar className="w-5 h-5 text-amber-400" /> Tournament Events &amp; Games ({filteredGames.length})
+          <h2 className="text-lg font-black text-white flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-amber-400" /> Games &amp; Schedules ({filteredGames.length})
           </h2>
           <p className="text-xs text-slate-400">
-            Season events contain one or more tournament games with registered player accounts.
+            Filter, edit, or launch scheduled and live league games.
           </p>
         </div>
 
@@ -217,16 +211,16 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
                 {/* Metrics Strip */}
                 <div className="grid grid-cols-4 gap-2 py-2 border-y border-slate-800/80 text-center text-xs">
                   <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800/60">
-                    <span className="text-[10px] text-slate-400 block uppercase font-medium">Buy-in</span>
-                    <strong className="text-emerald-400">${game.buyinAmount}</strong>
+                    <span className="text-[10px] text-slate-400 block uppercase font-medium">Points</span>
+                    <strong className="text-emerald-400">{game.pointMultiplier ?? 1}x</strong>
                   </div>
                   <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800/60">
                     <span className="text-[10px] text-slate-400 block uppercase font-medium">Stack</span>
                     <strong className="text-indigo-300">{(game.startingChips / 1000).toFixed(0)}k</strong>
                   </div>
                   <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800/60">
-                    <span className="text-[10px] text-slate-400 block uppercase font-medium">Rebuys</span>
-                    <strong className="text-amber-400">${game.rebuyAmount}</strong>
+                    <span className="text-[10px] text-slate-400 block uppercase font-medium">Session</span>
+                    <strong className="text-amber-400">{game.isDayGame ? 'Day (DG)' : 'Standard'}</strong>
                   </div>
                   <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800/60">
                     <span className="text-[10px] text-slate-400 block uppercase font-medium">Players</span>

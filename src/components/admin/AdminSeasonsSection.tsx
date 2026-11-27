@@ -24,17 +24,11 @@ export const AdminSeasonsSection: React.FC<AdminSeasonsSectionProps> = ({
     <div className="space-y-4">
       <Card className="p-5 border-slate-800 bg-slate-900/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <Badge variant="default" className="text-[10px]">
-              STEP 1: SEASONS
-            </Badge>
-            <span className="text-xs text-slate-400">Points Race &amp; Timeline</span>
-          </div>
-          <h2 className="text-lg font-black text-white flex items-center gap-2 mt-1">
-            <Trophy className="w-5 h-5 text-amber-400" /> Championship Seasons Directory ({seasons.length})
+          <h2 className="text-lg font-black text-white flex items-center gap-2">
+            <Trophy className="w-5 h-5 text-amber-400" /> Seasons ({seasons.length})
           </h2>
           <p className="text-xs text-slate-400">
-            Define championship seasons, start/end dates, and select the current active season for the league.
+            Configure championship seasons, date ranges, and the active season.
           </p>
         </div>
 

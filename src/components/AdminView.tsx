@@ -7,31 +7,32 @@ import { VenueManagerModal } from './VenueManagerModal';
 import { SeasonManagerModal } from './SeasonManagerModal';
 import { UserInviteModal } from './UserInviteModal';
 import { LeagueManagerModal } from './LeagueManagerModal';
+import {
+  AdminDashboardOverview,
+  type DashboardSectionKey,
+} from './admin/AdminDashboardOverview';
 import { AdminLeaguesSection } from './admin/AdminLeaguesSection';
 import { AdminSeasonsSection } from './admin/AdminSeasonsSection';
 import { AdminVenuesSection } from './admin/AdminVenuesSection';
 import { AdminSchedulesSection } from './admin/AdminSchedulesSection';
 import { AdminUsersSection } from './admin/AdminUsersSection';
 import { AdminRBACSection } from './admin/AdminRBACSection';
-import { 
-  Building2, 
-  ShieldCheck, 
-  Plus, 
-  Crown, 
+import {
+  Building2,
+  ShieldCheck,
+  Plus,
+  Crown,
   CheckCircle2,
   Users,
-  Sparkles,
   ArrowLeft,
-  ArrowDown,
   Calendar,
   Trophy,
-  ChevronRight
+  LayoutGrid,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card } from '@/components/ui/card';
 
-export type AdminTab = 'leagues' | 'flow' | 'seasons' | 'venues' | 'schedules' | 'users' | 'rbac';
+export type AdminTab = DashboardSectionKey;
 
 interface AdminViewProps {
   games: Game[];
@@ -61,17 +62,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
   onGamesChange,
   onVenuesChange,
   onSeasonsChange,
-  onEventsChange: _onEventsChange,
   onLeaguesChange,
   onRoleChange,
   onSelectGame,
   onBack,
   backLabel = 'Back to Games',
 }) => {
-  const isAdmin = currentUser?.role === 'admin';
-
-  // Default to leagues tab for platform administrators, or full flow for league managers
-  const [activeTab, setActiveTab] = useState<AdminTab>(isAdmin ? 'leagues' : 'flow');
+  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
 
   // Modals state
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
@@ -82,8 +79,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [isLeagueModalOpen, setIsLeagueModalOpen] = useState(false);
   const [leagueToEdit, setLeagueToEdit] = useState<League | null>(null);
 
-  // Leagues state
+  // Leagues & Users state
   const [leagues, setLeagues] = useState<League[]>(initialLeagues);
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [successMsg, setSuccessMsg] = useState('');
+
+  // Filters
+  const [selectedScheduleSeason, setSelectedScheduleSeason] = useState<string>('all');
+  const [selectedScheduleVenue, setSelectedScheduleVenue] = useState<string>('all');
+  const [selectedRecurrenceFilter, setSelectedRecurrenceFilter] = useState<'all' | 'recurring' | 'single'>('all');
+  const [searchUserQuery, setSearchUserQuery] = useState('');
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState<'all' | UserRole>('all');
+
+  const activeSeason = seasons.find((s) => s.isActive) || seasons[0];
 
   useEffect(() => {
     if (!initialLeagues || initialLeagues.length === 0) {
@@ -91,40 +99,24 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
   }, [initialLeagues]);
 
-  // Feedback notifications
-  const [successMsg, setSuccessMsg] = useState('');
-
-  // Schedules filter state (filtered by season, venue, and recurrence)
-  const [selectedScheduleSeason, setSelectedScheduleSeason] = useState<string>('all');
-  const [selectedScheduleVenue, setSelectedScheduleVenue] = useState<string>('all');
-  const [selectedRecurrenceFilter, setSelectedRecurrenceFilter] = useState<'all' | 'recurring' | 'single'>('all');
-
-  // Users & Staff state
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [searchUserQuery, setSearchUserQuery] = useState('');
-  const [selectedRoleFilter, setSelectedRoleFilter] = useState<'all' | UserRole>('all');
-
-  const activeSeason = seasons.find((s) => s.isActive) || seasons[0];
-
   useEffect(() => {
-    async function loadUsers() {
-      const allUsers = await AuthService.getAllUsers();
-      setUsers(allUsers);
-    }
-    loadUsers();
+    AuthService.getAllUsers().then(setUsers);
   }, []);
+
+  const showToast = (msg: string) => {
+    setSuccessMsg(msg);
+    setTimeout(() => setSuccessMsg(''), 4000);
+  };
 
   const handleQuickRoleSwitch = async (role: UserRole) => {
     onRoleChange(role);
-    setSuccessMsg(`Switched active session role to: ${role.toUpperCase()}`);
-    setTimeout(() => setSuccessMsg(''), 4000);
+    showToast(`Switched active session role to: ${role.toUpperCase()}`);
   };
 
   const handleQuickSetActiveSeason = async (seasonId: string) => {
     const updated = await AppwriteService.setActiveSeason(seasonId, seasons);
     onSeasonsChange(updated);
-    setSuccessMsg('Active season updated.');
-    setTimeout(() => setSuccessMsg(''), 4000);
+    showToast('Active season updated.');
   };
 
   const handleQuickAssignManager = async (
@@ -145,9 +137,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
       const updatedUsers = await AuthService.updateUserRole(manager.id, 'manager', currentUser);
       setUsers(updatedUsers);
     }
-
-    setSuccessMsg(`Designated ${manager.name} as League Manager.`);
-    setTimeout(() => setSuccessMsg(''), 4000);
+    showToast(`Designated ${manager.name} as League Manager.`);
   };
 
   const handleLeagueSaved = (savedLeague: League) => {
@@ -157,8 +147,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
       : [savedLeague, ...leagues];
     setLeagues(updated);
     if (onLeaguesChange) onLeaguesChange(updated);
-    setSuccessMsg(`Configured League "${savedLeague.name}" with manager ${savedLeague.managerName || 'assigned'}.`);
-    setTimeout(() => setSuccessMsg(''), 4000);
+    showToast(`Saved league "${savedLeague.name}".`);
   };
 
   const handleChangeUserRole = async (userId: string, newRole: UserRole) => {
@@ -175,13 +164,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
     const updated = await AuthService.updateUserRole(userId, newRole, currentUser);
     setUsers(updated);
-
     if (currentUser && currentUser.$id === userId) {
       onRoleChange(newRole);
     }
-
-    setSuccessMsg(`Updated ${targetUser.name}'s role to ${newRole.toUpperCase()}`);
-    setTimeout(() => setSuccessMsg(''), 4000);
+    showToast(`Updated ${targetUser.name}'s role to ${newRole.toUpperCase()}`);
   };
 
   const handleDeleteUser = async (userId: string, userName: string) => {
@@ -197,19 +183,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
         return;
       }
     }
-
     if (!window.confirm(`Are you sure you want to remove user "${userName}"?`)) return;
 
     const updated = await AuthService.deleteUser(userId);
     setUsers(updated);
-    setSuccessMsg(`User "${userName}" has been removed.`);
-    setTimeout(() => setSuccessMsg(''), 4000);
+    showToast(`User "${userName}" has been removed.`);
   };
 
   const handleUserCreated = (newUser: UserProfile) => {
     setUsers((prev) => [newUser, ...prev]);
-    setSuccessMsg(`Added user "${newUser.name}" as ${newUser.role.toUpperCase()}`);
-    setTimeout(() => setSuccessMsg(''), 4000);
+    showToast(`Added user "${newUser.name}" as ${newUser.role.toUpperCase()}`);
   };
 
   const handleDeleteGame = async (gameId: string, gameTitle: string) => {
@@ -217,14 +200,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
     try {
       await AppwriteService.deleteGame(gameId);
       onGamesChange(games.filter((g) => g.$id !== gameId));
-      setSuccessMsg(`Deleted event "${gameTitle}".`);
-      setTimeout(() => setSuccessMsg(''), 4000);
+      showToast(`Deleted event "${gameTitle}".`);
     } catch {
       alert('Failed to delete event');
     }
   };
 
-  // Filter games based on selected season, venue, and recurrence
   const filteredGames = games.filter((g) => {
     const matchesSeason = selectedScheduleSeason === 'all' || g.seasonId === selectedScheduleSeason;
     const matchesVenue = selectedScheduleVenue === 'all' || g.venueId === selectedScheduleVenue;
@@ -252,10 +233,18 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
   };
 
+  const navTabs: { id: AdminTab; label: string; count?: number; icon: React.ReactNode; visible: boolean }[] = [
+    { id: 'overview', label: 'Dashboard', icon: <LayoutGrid className="w-4 h-4" />, visible: true },
+    { id: 'leagues', label: 'Leagues', count: leagues.length, icon: <Crown className="w-4 h-4" />, visible: true },
+    { id: 'seasons', label: 'Seasons', count: seasons.length, icon: <Trophy className="w-4 h-4" />, visible: true },
+    { id: 'venues', label: 'Venues', count: venues.length, icon: <Building2 className="w-4 h-4" />, visible: true },
+    { id: 'schedules', label: 'Games', count: games.length, icon: <Calendar className="w-4 h-4" />, visible: true },
+    { id: 'users', label: 'Players', count: users.length, icon: <Users className="w-4 h-4" />, visible: true },
+    { id: 'rbac', label: 'Permissions', icon: <ShieldCheck className="w-4 h-4" />, visible: true },
+  ];
+
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12 animate-fadeIn">
-      
-      {/* Back Button Header */}
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-5 pb-24 md:pb-12 animate-fadeIn">
       {onBack && (
         <Button
           variant="ghost"
@@ -267,229 +256,101 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </Button>
       )}
 
-      {/* 1. Executive Admin Header with KPI Metric Badges */}
-      <Card className="p-6 border-slate-800 bg-slate-900/60 space-y-5">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 shadow-lg">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <Badge variant="default" className="text-[10px]">
-                  MANAGEMENT PORTAL
-                </Badge>
-                <span className="text-xs text-slate-400 font-medium">Executive League Console</span>
-              </div>
-              <h1 className="text-2xl font-black text-white mt-0.5">League Operations &amp; Administration</h1>
-            </div>
+      {/* Compact Dashboard Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+            <ShieldCheck className="w-5 h-5" />
           </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-black text-white">Admin Dashboard</h1>
+              {activeSeason && <Badge variant="secondary">{activeSeason.name}</Badge>}
+            </div>
+            <p className="text-xs text-slate-400">
+              Manage leagues, seasons, venues, games, players, and permissions
+            </p>
+          </div>
+        </div>
 
-          {/* Quick Contextual Create Action */}
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            {isAdmin && (
+        <Button
+          variant="default"
+          onClick={() => {
+            setGameToEdit(null);
+            setIsScheduleModalOpen(true);
+          }}
+          className="h-10 w-full sm:w-auto"
+        >
+          <Plus className="w-4 h-4" /> Schedule Game
+        </Button>
+      </div>
+
+      {/* Data Type Switcher Bar */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-800">
+        {navTabs
+          .filter((t) => t.visible)
+          .map((tab) => {
+            const isSelected = activeTab === tab.id;
+            return (
               <Button
-                variant="outline"
-                size="default"
-                onClick={() => {
-                  setLeagueToEdit(null);
-                  setIsLeagueModalOpen(true);
-                }}
-                className="w-full md:w-auto border-rose-500/30 text-rose-300 hover:bg-rose-500/10"
+                key={tab.id}
+                type="button"
+                variant={isSelected ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setActiveTab(tab.id)}
+                className="h-10 px-3.5 text-xs whitespace-nowrap shrink-0"
               >
-                <Plus className="w-4 h-4" /> Create League
+                {tab.icon}
+                <span>{tab.label}</span>
+                {tab.count !== undefined && (
+                  <span
+                    className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none ${
+                      isSelected ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
               </Button>
-            )}
-            <Button
-              variant="default"
-              size="default"
-              onClick={() => {
-                setGameToEdit(null);
-                setIsScheduleModalOpen(true);
-              }}
-              className="w-full md:w-auto"
-            >
-              <Plus className="w-4 h-4" /> Schedule Tournament
-            </Button>
-          </div>
-        </div>
+            );
+          })}
+      </div>
 
-        {/* Executive KPI Stats Bar */}
-        <div className={`grid grid-cols-2 ${isAdmin ? 'sm:grid-cols-5' : 'sm:grid-cols-4'} gap-3 pt-4 border-t border-slate-800/80`}>
-          {isAdmin && (
-            <div 
-              onClick={() => setActiveTab('leagues')}
-              className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-                activeTab === 'leagues' ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1.5">
-                <Trophy className="w-3.5 h-3.5 text-rose-400" /> 0. Leagues
-              </div>
-              <div className="text-base font-black text-rose-300 mt-1 truncate">{leagues.length} Leagues</div>
-              <span className="text-[10px] text-slate-500 mt-0.5 block">Governance &amp; Managers</span>
-            </div>
-          )}
-          <div 
-            onClick={() => setActiveTab('seasons')}
-            className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-              activeTab === 'seasons' ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1.5">
-              <Trophy className="w-3.5 h-3.5 text-amber-400" /> 1. Active Season
-            </div>
-            <div className="text-base font-black text-amber-300 mt-1 truncate">{activeSeason?.name || '2026 Crawl 3'}</div>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">{seasons.length} Total Seasons</span>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('venues')}
-            className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-              activeTab === 'venues' ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5 text-emerald-400" /> 2. Host Venues
-            </div>
-            <div className="text-base font-black text-white mt-1">{venues.length} Locations</div>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">Partner Bars &amp; Clubs</span>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('schedules')}
-            className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-              activeTab === 'schedules' ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-amber-400" /> 3. Event Schedules
-            </div>
-            <div className="text-base font-black text-white mt-1">{games.length} Events</div>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">Tournaments Scheduled</span>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('users')}
-            className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-              activeTab === 'users' ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-indigo-400" /> 4. Users &amp; Staff
-            </div>
-            <div className="text-base font-black text-white mt-1">{users.length} Registered</div>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">Managers, TDs &amp; Scribes</span>
-          </div>
-        </div>
-      </Card>
-
-      {/* Success Notification Alert */}
       {successMsg && (
-        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-2 animate-fadeIn">
+        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
           <span>{successMsg}</span>
         </div>
       )}
 
-      {/* 2. Sleek Segmented Admin Tab Navigation Bar */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none border-b border-slate-800">
-        {isAdmin && (
-          <Button
-            variant={activeTab === 'leagues' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setActiveTab('leagues')}
-            className={`text-xs whitespace-nowrap h-9 ${
-              activeTab === 'leagues' ? 'bg-rose-500 text-white hover:bg-rose-400' : 'text-rose-400/90'
-            }`}
-          >
-            <Trophy className="w-4 h-4" />
-            <span>0. Platform Leagues</span>
-            <Badge variant="secondary" className="text-[9px] px-1.5 py-0 ml-1">
-              {leagues.length}
-            </Badge>
-          </Button>
-        )}
+      {/* Active Data Type View */}
+      {activeTab === 'overview' && (
+        <AdminDashboardOverview
+          leagues={leagues}
+          seasons={seasons}
+          venues={venues}
+          games={games}
+          users={users}
+          onOpenSection={setActiveTab}
+          onCreateGame={() => {
+            setGameToEdit(null);
+            setIsScheduleModalOpen(true);
+          }}
+          onCreateSeason={() => setIsSeasonModalOpen(true)}
+          onCreateVenue={() => setIsVenueModalOpen(true)}
+          onInviteUser={() => setIsInviteUserOpen(true)}
+          onCreateLeague={() => {
+            setLeagueToEdit(null);
+            setIsLeagueModalOpen(true);
+          }}
+          onEditGame={(game) => {
+            setGameToEdit(game);
+            setIsScheduleModalOpen(true);
+          }}
+          onSelectGame={onSelectGame}
+        />
+      )}
 
-        <Button
-          variant={activeTab === 'flow' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setActiveTab('flow')}
-          className="text-xs whitespace-nowrap h-9"
-        >
-          <Sparkles className="w-4 h-4" />
-          <span>Full Setup Flow</span>
-          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 ml-1">
-            Top-to-Bottom
-          </Badge>
-        </Button>
-
-        <Button
-          variant={activeTab === 'seasons' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setActiveTab('seasons')}
-          className="text-xs whitespace-nowrap h-9"
-        >
-          <Trophy className="w-4 h-4" />
-          <span>1. Championship Seasons</span>
-          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 ml-1">
-            {seasons.length}
-          </Badge>
-        </Button>
-
-        <Button
-          variant={activeTab === 'venues' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setActiveTab('venues')}
-          className="text-xs whitespace-nowrap h-9"
-        >
-          <Building2 className="w-4 h-4" />
-          <span>2. Host Venues</span>
-          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 ml-1">
-            {venues.length}
-          </Badge>
-        </Button>
-
-        <Button
-          variant={activeTab === 'schedules' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setActiveTab('schedules')}
-          className="text-xs whitespace-nowrap h-9"
-        >
-          <Calendar className="w-4 h-4" />
-          <span>3. Event Schedules (by Season)</span>
-          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 ml-1">
-            {games.length}
-          </Badge>
-        </Button>
-
-        <Button
-          variant={activeTab === 'users' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setActiveTab('users')}
-          className={`text-xs whitespace-nowrap h-9 ${activeTab === 'users' ? 'bg-indigo-500 text-white hover:bg-indigo-400' : ''}`}
-        >
-          <Users className="w-4 h-4" />
-          <span>4. Staff &amp; Users</span>
-          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 ml-1">
-            {users.length}
-          </Badge>
-        </Button>
-
-        <Button
-          variant={activeTab === 'rbac' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setActiveTab('rbac')}
-          className="text-xs whitespace-nowrap h-9"
-        >
-          <Crown className="w-4 h-4" />
-          <span>5. Role Permissions (RBAC)</span>
-        </Button>
-      </div>
-
-      {/* 3. TAB / FLOW CONTENT VIEWS */}
-
-      {/* 0. PLATFORM LEAGUES SECTION (FOR ADMINS) */}
       {activeTab === 'leagues' && (
         <AdminLeaguesSection
           leagues={leagues}
@@ -506,77 +367,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
         />
       )}
 
-      {/* FULL TOP-TO-BOTTOM SETUP FLOW */}
-      {activeTab === 'flow' && (
-        <div className="space-y-8 animate-fadeIn">
-          {/* Stage 1: Championship Seasons */}
-          <section className="space-y-4">
-            <AdminSeasonsSection
-              seasons={seasons}
-              games={games}
-              onOpenSeasonModal={() => setIsSeasonModalOpen(true)}
-              onQuickSetActiveSeason={handleQuickSetActiveSeason}
-              formatDate={formatDate}
-            />
-          </section>
-
-          {/* Sequential Flow Indicator 1 -> 2 */}
-          <div className="flex items-center justify-center py-1">
-            <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-400 shadow-sm">
-              <span className="w-2 h-2 rounded-full bg-amber-400" />
-              <span className="font-semibold text-slate-300">Step 1 Configured</span>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
-              <span>Step 2: Assign Host Venues</span>
-              <ArrowDown className="w-3.5 h-3.5 text-amber-400 animate-bounce" />
-            </div>
-          </div>
-
-          {/* Stage 2: Host Venues */}
-          <section className="space-y-4">
-            <AdminVenuesSection
-              venues={venues}
-              games={games}
-              onOpenVenueModal={() => setIsVenueModalOpen(true)}
-            />
-          </section>
-
-          {/* Sequential Flow Indicator 2 -> 3 */}
-          <div className="flex items-center justify-center py-1">
-            <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-400 shadow-sm">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="font-semibold text-slate-300">Step 2 Configured</span>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
-              <span>Step 3: Schedule Tournaments within each Season</span>
-              <ArrowDown className="w-3.5 h-3.5 text-emerald-400 animate-bounce" />
-            </div>
-          </div>
-
-          {/* Stage 3: Event Schedules Scoped by Season */}
-          <section className="space-y-4">
-            <AdminSchedulesSection
-              games={games}
-              filteredGames={filteredGames}
-              events={events}
-              venues={venues}
-              seasons={seasons}
-              selectedScheduleSeason={selectedScheduleSeason}
-              setSelectedScheduleSeason={setSelectedScheduleSeason}
-              selectedScheduleVenue={selectedScheduleVenue}
-              setSelectedScheduleVenue={setSelectedScheduleVenue}
-              selectedRecurrenceFilter={selectedRecurrenceFilter}
-              setSelectedRecurrenceFilter={setSelectedRecurrenceFilter}
-              onOpenScheduleModal={(game) => {
-                setGameToEdit(game || null);
-                setIsScheduleModalOpen(true);
-              }}
-              onDeleteGame={handleDeleteGame}
-              onSelectGame={onSelectGame}
-            />
-          </section>
-        </div>
-      )}
-
-      {/* FOCUSED TAB VIEWS */}
       {activeTab === 'seasons' && (
         <AdminSeasonsSection
           seasons={seasons}
@@ -586,6 +376,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           formatDate={formatDate}
         />
       )}
+
       {activeTab === 'venues' && (
         <AdminVenuesSection
           venues={venues}
@@ -593,6 +384,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           onOpenVenueModal={() => setIsVenueModalOpen(true)}
         />
       )}
+
       {activeTab === 'schedules' && (
         <AdminSchedulesSection
           games={games}
@@ -614,6 +406,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           onSelectGame={onSelectGame}
         />
       )}
+
       {activeTab === 'users' && (
         <AdminUsersSection
           users={users}
@@ -628,6 +421,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           onDeleteUser={handleDeleteUser}
         />
       )}
+
       {activeTab === 'rbac' && (
         <AdminRBACSection
           currentUser={currentUser}
@@ -635,11 +429,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         />
       )}
 
-      {/* ======================================================== */}
-      {/* MODALS                                                   */}
-      {/* ======================================================== */}
-
-      {/* Event Schedule Modal with preselected season support */}
+      {/* Modals */}
       <EventScheduleModal
         isOpen={isScheduleModalOpen}
         onClose={() => {
@@ -653,26 +443,22 @@ export const AdminView: React.FC<AdminViewProps> = ({
         onGameSaved={(savedGame) => {
           if (gameToEdit) {
             onGamesChange(games.map((g) => (g.$id === savedGame.$id ? savedGame : g)));
-            setSuccessMsg(`Updated event schedule for "${savedGame.title}".`);
+            showToast(`Updated "${savedGame.title}".`);
           } else {
             onGamesChange([savedGame, ...games]);
-            setSuccessMsg(`Scheduled new tournament event "${savedGame.title}".`);
+            showToast(`Scheduled "${savedGame.title}".`);
           }
-          setTimeout(() => setSuccessMsg(''), 4000);
         }}
         onGamesSaved={(newGames) => {
           onGamesChange([...newGames, ...games]);
-          setSuccessMsg(`Scheduled recurring weekly series: ${newGames.length} tournaments created.`);
-          setTimeout(() => setSuccessMsg(''), 4000);
+          showToast(`Scheduled recurring series (${newGames.length} games).`);
         }}
         onGameDeleted={(deletedId) => {
           onGamesChange(games.filter((g) => g.$id !== deletedId));
-          setSuccessMsg('Event canceled and deleted.');
-          setTimeout(() => setSuccessMsg(''), 4000);
+          showToast('Event canceled and deleted.');
         }}
       />
 
-      {/* Venue Manager Modal */}
       <VenueManagerModal
         isOpen={isVenueModalOpen}
         onClose={() => setIsVenueModalOpen(false)}
@@ -680,7 +466,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
         onVenuesChange={onVenuesChange}
       />
 
-      {/* Season Manager Modal */}
       <SeasonManagerModal
         isOpen={isSeasonModalOpen}
         onClose={() => setIsSeasonModalOpen(false)}
@@ -688,14 +473,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
         onSeasonsChange={onSeasonsChange}
       />
 
-      {/* User Invite / Staff Creation Modal */}
       <UserInviteModal
         isOpen={isInviteUserOpen}
         onClose={() => setIsInviteUserOpen(false)}
         onUserCreated={handleUserCreated}
       />
 
-      {/* League Manager Modal */}
       <LeagueManagerModal
         isOpen={isLeagueModalOpen}
         onClose={() => {
@@ -706,7 +489,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
         users={users}
         onLeagueSaved={handleLeagueSaved}
       />
-
     </div>
   );
 };

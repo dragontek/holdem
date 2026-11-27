@@ -1,16 +1,6 @@
 import React from 'react';
 import type { League, UserProfile } from '@/types/holdem';
-import { 
-  Trophy, 
-  Crown, 
-  Plus, 
-  Settings, 
-  Calendar, 
-  Building2, 
-  UserCheck, 
-  ExternalLink,
-  ShieldCheck 
-} from 'lucide-react';
+import { Trophy, Crown, Plus, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -35,17 +25,11 @@ export const AdminLeaguesSection: React.FC<AdminLeaguesSectionProps> = ({
       {/* Top Banner Card */}
       <Card className="p-5 border-slate-800 bg-slate-900/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <Badge variant="default" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/30">
-              PLATFORM GOVERNANCE
-            </Badge>
-            <span className="text-xs text-slate-400">Super Administrator Console</span>
-          </div>
-          <h2 className="text-lg font-black text-white flex items-center gap-2 mt-1">
-            <Trophy className="w-5 h-5 text-amber-400" /> Leagues &amp; Assigned Managers ({leagues.length})
+          <h2 className="text-lg font-black text-white flex items-center gap-2">
+            <Trophy className="w-5 h-5 text-amber-400" /> Leagues ({leagues.length})
           </h2>
           <p className="text-xs text-slate-400">
-            Create leagues and assign designated League Managers to configure seasons, host venues, and event schedules.
+            Create leagues and assign League Managers.
           </p>
         </div>
 

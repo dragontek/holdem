@@ -2,7 +2,6 @@ import React from 'react';
 import type { Venue, Game } from '@/types/holdem';
 import { Building2, Plus, MapPin, Phone, Edit3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 
 export interface AdminVenuesSectionProps {
@@ -20,17 +19,11 @@ export const AdminVenuesSection: React.FC<AdminVenuesSectionProps> = ({
     <div className="space-y-4">
       <Card className="p-5 border-slate-800 bg-slate-900/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <Badge variant="indigo" className="text-[10px]">
-              STEP 2: VENUES
-            </Badge>
-            <span className="text-xs text-slate-400">Host Locations &amp; Tables</span>
-          </div>
-          <h2 className="text-lg font-black text-white flex items-center gap-2 mt-1">
-            <Building2 className="w-5 h-5 text-emerald-400" /> Host Venues Directory ({venues.length})
+          <h2 className="text-lg font-black text-white flex items-center gap-2">
+            <Building2 className="w-5 h-5 text-emerald-400" /> Host Venues ({venues.length})
           </h2>
           <p className="text-xs text-slate-400">
-            Configure partner venues, bar addresses, phone numbers, and locations where tournaments take place.
+            Manage partner venues, addresses, phone numbers, and locations.
           </p>
         </div>
 

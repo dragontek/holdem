@@ -1,8 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import type { Game, GameEntry, Player, Venue, Season, UserRole } from '../types/holdem';
+import React, { useState, useEffect, useRef } from 'react';
+import type { Game, GameEntry, Player, Venue, Season, UserRole, KnockoutCode } from '../types/holdem';
 import { AppwriteService } from '../services/appwriteService';
 import { AuthService } from '../services/authService';
 import { PlayerSeatingModal } from './PlayerSeatingModal';
+import { SessionRulesBar } from './director/SessionRulesBar';
+import { ScorecardTable } from './director/ScorecardTable';
+import { PaperScorecardView } from './director/PaperScorecardView';
+import { RsvpCheckinPanel } from './director/RsvpCheckinPanel';
+import { PlayerScoreDialog } from './director/PlayerScoreDialog';
+import { EliminationDialog, type EliminationConfirmPayload } from './director/EliminationDialog';
+import { FinalizeTournamentDialog } from './director/FinalizeTournamentDialog';
+import {
+  calculateEntryScore,
+  formatBlindInThousands,
+  getEntryStatus,
+  PLACEMENT_POINTS,
+  syncEntryCalculatedFields,
+  type FinalizedEntryResult,
+} from '@/lib/scoring';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { 
   Play, 
   Pause, 
@@ -15,12 +33,17 @@ import {
   Users, 
   SlidersHorizontal, 
   CheckCircle2,
-  UserMinus,
   UserPlus,
   Sparkles,
   Award,
   Trophy,
-  ArrowLeft
+  ArrowLeft,
+  ClipboardList,
+  Clock,
+  Sun,
+  Flame,
+  Ban,
+  FileText,
 } from 'lucide-react';
 
 interface DirectorDeskProps {
@@ -32,7 +55,13 @@ interface DirectorDeskProps {
   allGames?: Game[];
   userRole?: UserRole;
   onUpdateGame: (updatedGame: Game) => void;
-  onEliminatePlayer: (entryId: string, koByPlayerId?: string) => void;
+  onEliminatePlayer: (
+    entryId: string,
+    koByPlayerId?: string,
+    koType?: KnockoutCode | null,
+    isMuck?: boolean
+  ) => void;
+  onTournamentFinalized?: (results: FinalizedEntryResult[]) => void;
   onSelectGame?: (game: Game) => void;
   onGamesChange?: (games: Game[]) => void;
   onEntriesChange: (entries: GameEntry[]) => void;
@@ -45,14 +74,10 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   activeGame,
   gameEntries,
   players,
-  venues = [],
-  seasons = [],
-  allGames = [],
   userRole = 'manager',
   onUpdateGame,
   onEliminatePlayer,
-  onSelectGame,
-  onGamesChange,
+  onTournamentFinalized,
   onEntriesChange,
   onBack,
   backLabel,
@@ -62,74 +87,111 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
   const [isRunning, setIsRunning] = useState<boolean>(activeGame.status === 'running');
   const [currentLevelIndex, setCurrentLevelIndex] = useState<number>(activeGame.currentLevelIndex);
   const [secondsLeft, setSecondsLeft] = useState<number>(activeGame.secondsRemainingInLevel);
+  const [overrideMinutesInput, setOverrideMinutesInput] = useState<string>('');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [deskTab, setDeskTab] = useState<'cockpit' | 'scorecard'>(
+    userRole === 'scribe' ? 'scorecard' : 'cockpit'
+  );
+  const [scorecardMode, setScorecardMode] = useState<'cards' | 'paper'>('cards');
 
   // Modals state
   const [selectedEntryToEliminate, setSelectedEntryToEliminate] = useState<GameEntry | null>(null);
-  const [koWinnerPlayerId, setKoWinnerPlayerId] = useState<string>('');
+  const [scoringEntryId, setScoringEntryId] = useState<string | null>(null);
   const [isSeatingModalOpen, setIsSeatingModalOpen] = useState<boolean>(false);
-  const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
+  const [seatingInitialPlayerId, setSeatingInitialPlayerId] = useState<string | null>(null);
+  const [isFinalizeDialogOpen, setIsFinalizeDialogOpen] = useState<boolean>(false);
   const [finalSuccessMsg, setFinalSuccessMsg] = useState<string>('');
 
   const currentLevel = activeGame.blindSchedule[currentLevelIndex] || activeGame.blindSchedule[0];
   const nextLevel = activeGame.blindSchedule[currentLevelIndex + 1];
 
   const canManageClock = AuthService.canManageClock(userRole);
+  const canEditScorecard = AuthService.canRecordBusts(userRole);
   const canFinalizeTournament = AuthService.canAccessAdmin(userRole);
 
-  // Sync clock if activeGame changes
+  const activeGameRef = useRef<Game>(activeGame);
+  const onUpdateGameRef = useRef(onUpdateGame);
+  const levelIndexRef = useRef<number>(currentLevelIndex);
+  const secondsLeftRef = useRef<number>(secondsLeft);
+
   useEffect(() => {
-    if (activeGame) {
-      setCurrentLevelIndex(activeGame.currentLevelIndex || 0);
-      setSecondsLeft(activeGame.secondsRemainingInLevel || 900);
-      setIsRunning(activeGame.status === 'running');
-    }
+    activeGameRef.current = activeGame;
+    onUpdateGameRef.current = onUpdateGame;
+  });
+
+  useEffect(() => {
+    levelIndexRef.current = currentLevelIndex;
+  }, [currentLevelIndex]);
+
+  useEffect(() => {
+    secondsLeftRef.current = secondsLeft;
+  }, [secondsLeft]);
+
+  // Sync clock if activeGame ID changes
+  useEffect(() => {
+    const nextLevelIdx = activeGameRef.current.currentLevelIndex || 0;
+    const nextSecs = activeGameRef.current.secondsRemainingInLevel || 900;
+    const nextRunning = activeGameRef.current.status === 'running';
+    levelIndexRef.current = nextLevelIdx;
+    secondsLeftRef.current = nextSecs;
+    setCurrentLevelIndex(nextLevelIdx);
+    setSecondsLeft(nextSecs);
+    setIsRunning(nextRunning);
   }, [activeGame.$id]);
 
-  // Timer Tick Engine
+  // Timer Tick Engine — updates local & parent state side-by-side inside interval callback
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (isRunning && secondsLeft > 0) {
-      interval = setInterval(() => {
-        setSecondsLeft((prev) => {
-          const nextSec = prev > 0 ? prev - 1 : 0;
-          onUpdateGame({
-            ...activeGame,
-            currentLevelIndex,
-            secondsRemainingInLevel: nextSec,
-            status: 'running',
-          });
-          return nextSec;
+    if (!isRunning) return;
+    const interval = setInterval(() => {
+      const game = activeGameRef.current;
+      const lvlIdx = levelIndexRef.current;
+      const currentSec = secondsLeftRef.current;
+
+      if (currentSec > 1) {
+        const nextSec = currentSec - 1;
+        secondsLeftRef.current = nextSec;
+        setSecondsLeft(nextSec);
+        onUpdateGameRef.current({
+          ...game,
+          currentLevelIndex: lvlIdx,
+          secondsRemainingInLevel: nextSec,
+          status: 'running',
         });
-      }, 1000);
-    } else if (secondsLeft === 0 && isRunning) {
-      if (currentLevelIndex < activeGame.blindSchedule.length - 1) {
-        const nextIdx = currentLevelIndex + 1;
-        const nextSecs = activeGame.blindSchedule[nextIdx].durationMinutes * 60;
+      } else if (lvlIdx < game.blindSchedule.length - 1) {
+        const nextIdx = lvlIdx + 1;
+        const nextSecs = game.blindSchedule[nextIdx].durationMinutes * 60;
+        levelIndexRef.current = nextIdx;
+        secondsLeftRef.current = nextSecs;
         setCurrentLevelIndex(nextIdx);
         setSecondsLeft(nextSecs);
-        onUpdateGame({
-          ...activeGame,
+        onUpdateGameRef.current({
+          ...game,
           currentLevelIndex: nextIdx,
           secondsRemainingInLevel: nextSecs,
           status: 'running',
         });
-        AppwriteService.updateGameClock(activeGame.$id, nextIdx, nextSecs);
+        void AppwriteService.updateGameClock(game.$id, nextIdx, nextSecs);
       } else {
+        secondsLeftRef.current = 0;
+        setSecondsLeft(0);
         setIsRunning(false);
       }
-    }
+    }, 1000);
     return () => clearInterval(interval);
-  }, [isRunning, secondsLeft, currentLevelIndex, activeGame]);
+  }, [isRunning]);
 
   // Periodic writeback every 5s while running
   useEffect(() => {
     if (!isRunning) return;
     const syncInterval = setInterval(() => {
-      AppwriteService.updateGameClock(activeGame.$id, currentLevelIndex, secondsLeft);
+      void AppwriteService.updateGameClock(
+        activeGameRef.current.$id,
+        levelIndexRef.current,
+        secondsLeftRef.current
+      );
     }, 5000);
     return () => clearInterval(syncInterval);
-  }, [isRunning, activeGame.$id, currentLevelIndex, secondsLeft]);
+  }, [isRunning, activeGame.$id]);
 
   const formatTime = (totalSeconds: number) => {
     const mins = Math.floor(totalSeconds / 60);
@@ -167,9 +229,9 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
     }
   };
 
-  const handleAddMinute = () => {
+  const handleAdjustSeconds = (deltaSeconds: number) => {
     if (!canManageClock) return;
-    const nextSecs = secondsLeft + 60;
+    const nextSecs = Math.max(0, secondsLeft + deltaSeconds);
     setSecondsLeft(nextSecs);
     onUpdateGame({
       ...activeGame,
@@ -177,6 +239,26 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       secondsRemainingInLevel: nextSecs,
     });
     AppwriteService.updateGameClock(activeGame.$id, currentLevelIndex, nextSecs);
+  };
+
+  const handleManualTimeOverride = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageClock) return;
+    const mins = Number(overrideMinutesInput);
+    if (!Number.isFinite(mins) || mins <= 0) return;
+    const nextSecs = Math.round(mins * 60);
+    setSecondsLeft(nextSecs);
+    const updatedSchedule = activeGame.blindSchedule.map((lvl, idx) =>
+      idx === currentLevelIndex ? { ...lvl, durationMinutes: mins } : lvl
+    );
+    onUpdateGame({
+      ...activeGame,
+      blindSchedule: updatedSchedule,
+      currentLevelIndex,
+      secondsRemainingInLevel: nextSecs,
+    });
+    AppwriteService.updateGameClock(activeGame.$id, currentLevelIndex, nextSecs);
+    setOverrideMinutesInput('');
   };
 
   const handleResetLevel = () => {
@@ -245,68 +327,83 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
     await AppwriteService.updatePlayerAddons(entryId, nextAddons);
   };
 
-  const handleConfirmElimination = async () => {
-    if (!selectedEntryToEliminate) return;
-    const activeCount = gameEntries.filter((e) => !e.isEliminated).length;
+  const handleUpdateSessionRules = async (updates: Partial<Game>) => {
+    const updatedGame: Game = { ...activeGame, ...updates };
+    onUpdateGame(updatedGame);
+    // Recompute live cached base/final points for entries when multiplier or No-Game changes
+    if (
+      updates.pointMultiplier !== undefined ||
+      updates.noGamePlayed !== undefined ||
+      updates.isDayGame !== undefined
+    ) {
+      const recalculated = gameEntries.map((entry) =>
+        syncEntryCalculatedFields(entry, updatedGame)
+      );
+      onEntriesChange(recalculated);
+    }
+    await AppwriteService.updateGame(activeGame.$id, updates);
+  };
+
+  const handleUpdateEntryScoring = async (entryId: string, updates: Partial<GameEntry>) => {
+    const target = gameEntries.find((e) => e.$id === entryId);
+    if (!target) return;
+
+    const synced = syncEntryCalculatedFields({ ...target, ...updates }, activeGame);
+    const updatedEntries = gameEntries.map((e) => (e.$id === entryId ? synced : e));
+    onEntriesChange(updatedEntries);
+
+    const remainingCount = updatedEntries.filter((e) => getEntryStatus(e) === 'ACTIVE').length;
+    if (remainingCount !== activeGame.remainingPlayersCount) {
+      onUpdateGame({ ...activeGame, remainingPlayersCount: remainingCount });
+    }
+
+    await AppwriteService.updateGameEntryScoring(entryId, synced);
+  };
+
+  const handleConfirmElimination = async (payload: EliminationConfirmPayload) => {
+    const targetEntry = gameEntries.find((e) => e.$id === payload.eliminatedEntryId);
+    if (!targetEntry) return;
+
+    const activeCount = gameEntries.filter((e) => getEntryStatus(e) === 'ACTIVE').length;
     const finishPos = activeCount;
+    const koWinnerEntry = payload.koWinnerPlayerId
+      ? gameEntries.find((e) => e.playerId === payload.koWinnerPlayerId)
+      : undefined;
 
-    onEliminatePlayer(selectedEntryToEliminate.$id, koWinnerPlayerId);
-
-    const koWinnerEntry = gameEntries.find((e) => e.playerId === koWinnerPlayerId);
+    onEliminatePlayer(
+      targetEntry.$id,
+      payload.koWinnerPlayerId,
+      payload.koType,
+      payload.isMuck
+    );
 
     await AppwriteService.recordEliminationWithKO(
       activeGame.$id,
-      selectedEntryToEliminate.$id,
+      targetEntry.$id,
       finishPos,
-      activeCount - 1,
+      Math.max(0, activeCount - 1),
       koWinnerEntry?.$id,
-      koWinnerPlayerId
+      payload.koWinnerPlayerId,
+      {
+        koType: payload.koType,
+        eliminatedBySeat: koWinnerEntry?.seatNumber,
+        knockedOutByPlayerName: koWinnerEntry?.playerName,
+        isMuck: payload.isMuck,
+      }
     );
 
     onUpdateGame({
       ...activeGame,
-      remainingPlayersCount: activeCount - 1,
+      remainingPlayersCount: Math.max(0, activeCount - 1),
     });
 
     setSelectedEntryToEliminate(null);
-    setKoWinnerPlayerId('');
   };
 
-  // Tournament Finalization
-  const handleFinalizeTournament = async () => {
-    if (!window.confirm('Are you sure you want to end and finalize this tournament? This will record final points and update player season standings.')) {
-      return;
-    }
-
-    setIsFinalizing(true);
-    const activeRemain = gameEntries.filter((e) => !e.isEliminated);
-    const eliminatedEntries = gameEntries.filter((e) => e.isEliminated).sort((a, b) => (a.finishPosition || 99) - (b.finishPosition || 99));
-
-    const results: { entryId: string; playerId: string; finishPosition: number; points: number }[] = [];
-
-    activeRemain.forEach((entry, idx) => {
-      const pos = idx + 1;
-      const pts = pos === 1 ? 50 : pos === 2 ? 35 : 25;
-      results.push({
-        entryId: entry.$id,
-        playerId: entry.playerId,
-        finishPosition: pos,
-        points: pts,
-      });
-    });
-
-    eliminatedEntries.forEach((entry) => {
-      const pos = entry.finishPosition || 10;
-      const pts = pos <= 3 ? 20 : pos <= 6 ? 10 : 5;
-      results.push({
-        entryId: entry.$id,
-        playerId: entry.playerId,
-        finishPosition: pos,
-        points: pts,
-      });
-    });
-
+  // Tournament Finalization using official Jack Ten Poker scoring engine
+  const handleConfirmFinalization = async (results: FinalizedEntryResult[]) => {
     await AppwriteService.finalizeTournament(activeGame.$id, results);
+    onTournamentFinalized?.(results);
 
     onUpdateGame({
       ...activeGame,
@@ -314,25 +411,21 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       remainingPlayersCount: 0,
     });
 
-    setIsFinalizing(false);
-    setFinalSuccessMsg('Tournament finalized! Season points & career wins have been saved to Appwrite.');
-    setTimeout(() => setFinalSuccessMsg(''), 8000);
+    setFinalSuccessMsg(
+      `Tournament finalized! Official Jack Ten Poker points (${results
+        .reduce((sum, r) => sum + r.finalPoints, 0)
+        .toLocaleString()} total pts) & DG carryovers have been saved.`
+    );
+    setTimeout(() => setFinalSuccessMsg(''), 9000);
   };
 
-  // Financial Calculations
+  // Session Points Summary Calculations
   const activeEntries = gameEntries.filter((ge) => !ge.isEliminated);
-  const totalBuyins = gameEntries.reduce((sum, ge) => sum + ge.buyinsCount, 0);
-  const totalRebuys = gameEntries.reduce((sum, ge) => sum + ge.rebuysCount, 0);
-  const totalAddons = gameEntries.reduce((sum, ge) => sum + ge.addonsCount, 0);
-
-  const totalPrizePool =
-    totalBuyins * activeGame.buyinAmount +
-    totalRebuys * activeGame.rebuyAmount +
-    totalAddons * activeGame.addonAmount;
-
-  const firstPlacePayout = (totalPrizePool * 0.5).toFixed(0);
-  const secondPlacePayout = (totalPrizePool * 0.3).toFixed(0);
-  const thirdPlacePayout = (totalPrizePool * 0.2).toFixed(0);
+  const sessionMultiplier = activeGame.pointMultiplier ?? 1;
+  const totalSessionPointsAwarded = gameEntries.reduce(
+    (sum, ge) => sum + calculateEntryScore(ge, activeGame).finalPoints,
+    0
+  );
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-24 md:pb-12">
@@ -341,38 +434,79 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
       {onBack && (
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
+          className="no-print flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" /> {backLabel || 'Back to Games'}
         </button>
       )}
 
       {/* 1. Director Header */}
-      <div className="glass-panel rounded-2xl p-5 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-xs font-bold uppercase tracking-wider flex items-center gap-1">
-              <SlidersHorizontal className="w-3.5 h-3.5" /> DIRECTOR CONTROL CENTER
-            </span>
+      <div className="no-print glass-panel rounded-2xl p-5 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="success">
+              <SlidersHorizontal className="w-3 h-3" /> DIRECTOR CONTROL CENTER
+            </Badge>
             <span className="text-xs text-slate-400">{activeGame.venueName}</span>
+            <Badge variant={(activeGame.pointMultiplier ?? 1) > 1 ? 'default' : 'secondary'}>
+              {activeGame.pointMultiplier ?? 1}x Points
+            </Badge>
+            {activeGame.isDayGame && (
+              <Badge variant="indigo">
+                <Sun className="w-3 h-3" /> DG
+              </Badge>
+            )}
+            {activeGame.noGamePlayed && (
+              <Badge variant="destructive">
+                <Ban className="w-3 h-3" /> No-Game (5,000)
+              </Badge>
+            )}
           </div>
-          <h1 className="text-2xl font-black text-white mt-1">{activeGame.title}</h1>
+          <h1 className="text-2xl font-black text-white">{activeGame.title}</h1>
+          {(activeGame.hodRule || activeGame.hotHandDescription) && (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+              {activeGame.hodRule && (
+                <span className="flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  HOD: <strong className="text-slate-200">{activeGame.hodRule}</strong>
+                </span>
+              )}
+              {activeGame.hotHandDescription && (
+                <span className="flex items-center gap-1">
+                  <Flame className="w-3.5 h-3.5 text-rose-400" />
+                  Hot Hand: <strong className="text-slate-200">{activeGame.hotHandDescription}</strong>
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Live Status Badge */}
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-400">Status:</span>
-          <span
-            className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${
+        {/* Live Status & Finalize Action */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Badge
+            variant={
               activeGame.status === 'running'
-                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 animate-pulse'
+                ? 'success'
                 : activeGame.status === 'completed'
-                ? 'bg-slate-800 text-slate-400 border-slate-700'
-                : 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-            }`}
+                ? 'secondary'
+                : 'default'
+            }
           >
             {activeGame.status === 'running' ? '● In Progress' : activeGame.status}
-          </span>
+          </Badge>
+
+          {canFinalizeTournament && (
+            <Button
+              type="button"
+              size="sm"
+              variant={activeGame.status === 'completed' ? 'secondary' : 'default'}
+              disabled={activeGame.status === 'completed' || gameEntries.length === 0}
+              onClick={() => setIsFinalizeDialogOpen(true)}
+            >
+              <Trophy className="w-4 h-4" />
+              {activeGame.status === 'completed' ? 'Finalized' : 'Finalize & Score'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -383,8 +517,87 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
         </div>
       )}
 
-      {/* Live Tournament Cockpit */}
-      <div className="space-y-6">
+      {/* Mode Switcher: Live Desk vs Digital Scorecard */}
+      <Tabs
+        value={deskTab}
+        onValueChange={(v) => setDeskTab(v as 'cockpit' | 'scorecard')}
+        className="space-y-4"
+      >
+        <TabsList className="no-print grid w-full max-w-md grid-cols-2 h-12">
+          <TabsTrigger value="cockpit" className="gap-1.5 h-10 text-xs sm:text-sm">
+            <Clock className="w-4 h-4" /> Live Clock &amp; Seating
+          </TabsTrigger>
+          <TabsTrigger value="scorecard" className="gap-1.5 h-10 text-xs sm:text-sm">
+            <ClipboardList className="w-4 h-4" /> Scorecard ({gameEntries.length})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="scorecard" className="space-y-5 mt-4">
+          {/* Interactive vs Paper Sheet Comparison Switcher */}
+          <div className="no-print flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex p-1 rounded-xl bg-slate-900 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setScorecardMode('cards')}
+                className={`min-h-[40px] px-3.5 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
+                  scorecardMode === 'cards'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <ClipboardList className="w-4 h-4" /> Mobile Cards
+              </button>
+              <button
+                type="button"
+                onClick={() => setScorecardMode('paper')}
+                className={`min-h-[40px] px-3.5 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
+                  scorecardMode === 'paper'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <FileText className="w-4 h-4" /> Paper Sheet (Compare / Print)
+              </button>
+            </div>
+          </div>
+
+          {scorecardMode === 'paper' ? (
+            <PaperScorecardView
+              game={activeGame}
+              entries={gameEntries}
+              canEdit={canEditScorecard}
+              onSelectEntry={(entryId) => setScoringEntryId(entryId)}
+            />
+          ) : (
+            <>
+              <SessionRulesBar
+                game={activeGame}
+                canEdit={canEditScorecard}
+                onUpdateSessionRules={handleUpdateSessionRules}
+              />
+              <RsvpCheckinPanel
+                rsvpPlayerIds={activeGame.rsvpPlayerIds || []}
+                players={players}
+                currentEntries={gameEntries}
+                canSeat={canEditScorecard && activeGame.status !== 'completed'}
+                onQuickSeat={handleSeatPlayer}
+                onOpenCustomSeat={(playerId) => {
+                  setSeatingInitialPlayerId(playerId);
+                  setIsSeatingModalOpen(true);
+                }}
+              />
+              <ScorecardTable
+                game={activeGame}
+                entries={gameEntries}
+                canEdit={canEditScorecard}
+                onUpdateEntry={handleUpdateEntryScoring}
+                onRequestScorePlayer={(entryId) => setScoringEntryId(entryId)}
+              />
+            </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="cockpit" className="space-y-6 mt-4">
           
           {/* Interactive Blind Clock Console */}
           <div className="glass-card rounded-2xl p-6 border border-slate-800 space-y-6">
@@ -414,33 +627,46 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
 
               <div className="mt-4 flex flex-wrap items-center justify-center gap-6 text-sm text-slate-200">
                 <div>
-                  <span className="text-xs text-slate-400 block uppercase">Small / Big Blind</span>
-                  <span className="text-2xl font-black text-amber-400">
-                    {currentLevel.smallBlind} / {currentLevel.bigBlind}
+                  <span className="text-xs text-slate-400 block uppercase">
+                    {currentLevel.isBreak ? 'Scheduled Break' : 'Small / Big Blind'}
                   </span>
+                  <span className="text-2xl font-black text-amber-400">
+                    {currentLevel.isBreak
+                      ? currentLevel.breakTitle || '10-Min Break'
+                      : `${currentLevel.smallBlind.toLocaleString()} / ${currentLevel.bigBlind.toLocaleString()}`}
+                  </span>
+                  {!currentLevel.isBreak && (
+                    <span className="block text-xs font-mono text-slate-400">
+                      ({formatBlindInThousands(currentLevel.smallBlind)} / {formatBlindInThousands(currentLevel.bigBlind)})
+                    </span>
+                  )}
                 </div>
 
                 {currentLevel.ante > 0 && (
                   <div>
                     <span className="text-xs text-slate-400 block uppercase">Big Blind Ante</span>
                     <span className="text-2xl font-black text-indigo-300">
-                      {currentLevel.ante}
+                      {currentLevel.ante.toLocaleString()}
                     </span>
                   </div>
                 )}
 
                 {nextLevel && (
                   <div className="border-l border-slate-700 pl-6">
-                    <span className="text-xs text-slate-400 block uppercase">Next Level ({nextLevel.level})</span>
+                    <span className="text-xs text-slate-400 block uppercase">
+                      Next {nextLevel.isBreak ? 'Break' : `Stage (${nextLevel.durationMinutes}m)`}
+                    </span>
                     <span className="text-sm font-bold text-slate-300">
-                      {nextLevel.smallBlind} / {nextLevel.bigBlind}
+                      {nextLevel.isBreak
+                        ? nextLevel.breakTitle || '10-Min Break'
+                        : `${formatBlindInThousands(nextLevel.smallBlind)} / ${formatBlindInThousands(nextLevel.bigBlind)}`}
                     </span>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Timer Controls */}
+            {/* Timer Controls & Manual Blind Time Override */}
             <div className="flex flex-wrap items-center justify-center gap-3">
               {canManageClock ? (
                 <>
@@ -457,8 +683,15 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                   </button>
 
                   <button
-                    onClick={handleAddMinute}
-                    className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
+                    onClick={() => handleAdjustSeconds(-60)}
+                    className="px-3.5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
+                  >
+                    <Minus className="w-4 h-4" /> -1 Min
+                  </button>
+
+                  <button
+                    onClick={() => handleAdjustSeconds(60)}
+                    className="px-3.5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
                   >
                     <Plus className="w-4 h-4" /> +1 Min
                   </button>
@@ -477,6 +710,26 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                   >
                     <RotateCcw className="w-4 h-4" />
                   </button>
+
+                  <form
+                    onSubmit={handleManualTimeOverride}
+                    className="flex items-center gap-1.5 pl-2 border-l border-slate-800"
+                  >
+                    <input
+                      type="number"
+                      min="1"
+                      max="120"
+                      step="1"
+                      value={overrideMinutesInput}
+                      onChange={(e) => setOverrideMinutesInput(e.target.value)}
+                      placeholder={`${currentLevel.durationMinutes}m`}
+                      aria-label="Override blind duration in minutes"
+                      className="w-16 h-10 rounded-xl bg-slate-950 border border-slate-700 px-2.5 text-xs font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                    <Button type="submit" size="sm" variant="outline" className="h-10 text-xs">
+                      Set Mins
+                    </Button>
+                  </form>
                 </>
               ) : (
                 <div className="text-xs text-slate-400 font-semibold px-4 py-2 bg-slate-900 rounded-xl border border-slate-800">
@@ -493,27 +746,46 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   <Users className="w-5 h-5 text-amber-400" /> Active Tables &amp; Seating ({activeEntries.length} remaining of {gameEntries.length})
                 </h2>
-                <p className="text-xs text-slate-400">Track chip re-buys, add-ons, and record knockout bounties in real time</p>
+                <p className="text-xs text-slate-400">Track rebuys, score bonuses, and record knockouts in real time</p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsSeatingModalOpen(true)}
-                  className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
+              <div className="flex flex-wrap items-center gap-2">
+                {canEditScorecard && activeGame.status !== 'completed' && gameEntries.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="default"
+                    onClick={() => setScoringEntryId(gameEntries[0].$id)}
+                    className="h-11 px-4 text-xs sm:text-sm font-bold"
+                  >
+                    <Award className="w-4 h-4" /> Add Points
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="success"
+                  onClick={() => {
+                    setSeatingInitialPlayerId(null);
+                    setIsSeatingModalOpen(true);
+                  }}
+                  className="h-11 px-4 text-xs sm:text-sm"
                 >
                   <UserPlus className="w-4 h-4" /> Seat Player
-                </button>
-                {canFinalizeTournament && (
-                  <button
-                    onClick={handleFinalizeTournament}
-                    disabled={isFinalizing || activeGame.status === 'completed'}
-                    className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
-                  >
-                    <Trophy className="w-4 h-4" /> {activeGame.status === 'completed' ? 'Tournament Finalized' : 'Finalize Event'}
-                  </button>
-                )}
+                </Button>
               </div>
             </div>
+
+            {/* RSVP Check-in Queue (Starts with RSVP'd Players) */}
+            <RsvpCheckinPanel
+              rsvpPlayerIds={activeGame.rsvpPlayerIds || []}
+              players={players}
+              currentEntries={gameEntries}
+              canSeat={canEditScorecard && activeGame.status !== 'completed'}
+              onQuickSeat={handleSeatPlayer}
+              onOpenCustomSeat={(playerId) => {
+                setSeatingInitialPlayerId(playerId);
+                setIsSeatingModalOpen(true);
+              }}
+            />
 
             {/* Players Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -555,152 +827,164 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                       <h4 className={`font-bold text-sm ${entry.isEliminated ? 'line-through text-slate-500' : 'text-white group-hover/player:text-amber-400 transition-colors'}`}>
                         {entry.playerName}
                       </h4>
-                      <div className="text-[10px] text-slate-400 flex items-center gap-2">
-                        <span>KOs: <strong className="text-amber-400">{entry.kosCount}</strong></span>
+                      <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-2">
+                        <span>
+                          Pts:{' '}
+                          <strong className="text-amber-400 font-mono">
+                            {calculateEntryScore(entry, activeGame).finalPoints.toLocaleString()}
+                          </strong>
+                        </span>
+                        <span>•</span>
+                        <span>KOs: <strong className="text-rose-400">{entry.kosCount}</strong></span>
                         <span>•</span>
                         <span>Rebuys: <strong className="text-emerald-400">{entry.rebuysCount}</strong></span>
                         <span>•</span>
                         <span>Addons: <strong className="text-indigo-400">{entry.addonsCount}</strong></span>
+                        {entry.hasDgCarryover && (
+                          <span className="px-1.5 py-0 rounded bg-indigo-500/20 text-indigo-300 font-bold">
+                            DG 2x
+                          </span>
+                        )}
+                        {getEntryStatus(entry) === 'MUCK' && (
+                          <span className="px-1.5 py-0 rounded bg-rose-500/20 text-rose-300 font-bold">
+                            MUCK
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
 
-                  {!entry.isEliminated ? (
-                    <div className="flex items-center gap-2 self-end sm:self-center">
-                      {/* Rebuy Stepper */}
-                      <div className="flex items-center bg-slate-950 rounded-lg border border-slate-800 p-0.5">
-                        <button
-                          onClick={() => handleAdjustRebuys(entry.$id, -1)}
-                          className="p-1 text-slate-400 hover:text-white"
-                          title="Subtract Rebuy"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="text-[10px] font-bold text-emerald-400 px-1.5">RB</span>
-                        <button
-                          onClick={() => handleAdjustRebuys(entry.$id, 1)}
-                          className="p-1 text-slate-400 hover:text-white"
-                          title="Add Rebuy ($20)"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-
-                      {/* Addon Stepper */}
-                      <div className="flex items-center bg-slate-950 rounded-lg border border-slate-800 p-0.5">
-                        <button
-                          onClick={() => handleAdjustAddons(entry.$id, -1)}
-                          className="p-1 text-slate-400 hover:text-white"
-                          title="Subtract Addon"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="text-[10px] font-bold text-indigo-400 px-1.5">AO</span>
-                        <button
-                          onClick={() => handleAdjustAddons(entry.$id, 1)}
-                          className="p-1 text-slate-400 hover:text-white"
-                          title="Add Add-on ($10)"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-
-                      {/* Bust Out Button */}
-                      <button
-                        onClick={() => setSelectedEntryToEliminate(entry)}
-                        className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold flex items-center gap-1 transition-all"
+                  {/* All Player Actions Consolidated Under the Pop-up */}
+                  <div className="flex items-center gap-2 self-stretch sm:self-center justify-end">
+                    {entry.isEliminated && (
+                      <span className="text-xs text-rose-400 font-bold">
+                        Bust #{entry.finishPosition}
+                      </span>
+                    )}
+                    {canEditScorecard && activeGame.status !== 'completed' && (
+                      <Button
+                        type="button"
+                        variant={entry.isEliminated ? 'outline' : 'default'}
+                        onClick={() => setScoringEntryId(entry.$id)}
+                        className="h-11 px-4 text-xs font-bold flex-1 sm:flex-none"
                       >
-                        <UserMinus className="w-3.5 h-3.5" /> Bust
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-rose-400 font-bold self-end sm:self-center">
-                      Bust #{entry.finishPosition}
-                    </span>
-                  )}
+                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                        {entry.isEliminated ? 'Edit Player' : 'Actions / Pts'}
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Financial Summary Breakdown */}
+          {/* Official Top 5 Points Scale Breakdown */}
           <div className="glass-panel rounded-2xl p-5 border border-slate-800 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Award className="w-5 h-5 text-amber-400" /> Payout Structure Breakdown
+                <Award className="w-5 h-5 text-amber-400" /> Final Table Points Scale ({sessionMultiplier}x Session)
               </h2>
-              <span className="text-sm font-black text-emerald-400">Total Prize Pool: ${totalPrizePool}</span>
+              <span className="text-sm font-mono font-black text-emerald-400">
+                Session Total: {totalSessionPointsAwarded.toLocaleString()} pts
+              </span>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl">
-                <div className="text-xs text-amber-400 font-bold uppercase">1st Place (50%)</div>
-                <div className="text-2xl font-black text-amber-300 mt-1">${firstPlacePayout}</div>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                <div className="text-xs text-slate-400 font-bold uppercase">2nd Place (30%)</div>
-                <div className="text-xl font-black text-white mt-1">${secondPlacePayout}</div>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                <div className="text-xs text-slate-400 font-bold uppercase">3rd Place (20%)</div>
-                <div className="text-xl font-black text-slate-300 mt-1">${thirdPlacePayout}</div>
-              </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
+              {[
+                { place: '1st Place', base: PLACEMENT_POINTS[1], highlight: true },
+                { place: '2nd Place', base: PLACEMENT_POINTS[2], highlight: false },
+                { place: '3rd Place', base: PLACEMENT_POINTS[3], highlight: false },
+                { place: '4th Place', base: PLACEMENT_POINTS[4], highlight: false },
+                { place: '5th Place', base: PLACEMENT_POINTS[5], highlight: false },
+              ].map((tier) => (
+                <div
+                  key={tier.place}
+                  className={
+                    tier.highlight
+                      ? 'bg-amber-500/10 border border-amber-500/30 p-3.5 rounded-xl'
+                      : 'bg-slate-900 border border-slate-800 p-3.5 rounded-xl'
+                  }
+                >
+                  <div
+                    className={`text-xs font-bold uppercase ${
+                      tier.highlight ? 'text-amber-400' : 'text-slate-400'
+                    }`}
+                  >
+                    {tier.place}
+                  </div>
+                  <div
+                    className={`text-xl font-mono font-black mt-1 ${
+                      tier.highlight ? 'text-amber-300' : 'text-white'
+                    }`}
+                  >
+                    +{(tier.base * sessionMultiplier).toLocaleString()}{' '}
+                    <span className="text-xs font-semibold text-slate-400">pts</span>
+                  </div>
+                  {sessionMultiplier > 1 && (
+                    <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                      {tier.base.toLocaleString()} base × {sessionMultiplier}x
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
-        </div>
+        </TabsContent>
+      </Tabs>
 
       {/* ======================================================== */}
       {/* MODALS                                                   */}
       {/* ======================================================== */}
 
-      {/* 1. Walk-in Player Seating Modal */}
+      {/* 1. RSVP & Walk-in Player Seating Modal */}
       <PlayerSeatingModal
         isOpen={isSeatingModalOpen}
-        onClose={() => setIsSeatingModalOpen(false)}
+        onClose={() => {
+          setIsSeatingModalOpen(false);
+          setSeatingInitialPlayerId(null);
+        }}
         availablePlayers={players}
         currentEntries={gameEntries}
+        rsvpPlayerIds={activeGame.rsvpPlayerIds || []}
+        initialPlayerId={seatingInitialPlayerId}
         onConfirmSeat={handleSeatPlayer}
       />
 
-      {/* 3. Elimination Modal */}
-      {selectedEntryToEliminate && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel rounded-2xl p-6 border border-slate-800 max-w-md w-full space-y-4">
-            <h3 className="text-lg font-bold text-white">Record Bust-out for {selectedEntryToEliminate.playerName}</h3>
-            <p className="text-xs text-slate-400">Select the player who delivered the knockout (KO bounty):</p>
+      {/* 2. Mobile-Friendly Unified Player Actions & Points Dialog */}
+      <PlayerScoreDialog
+        isOpen={Boolean(scoringEntryId)}
+        game={activeGame}
+        entries={gameEntries}
+        selectedEntryId={scoringEntryId}
+        onSelectEntryId={(entryId) => setScoringEntryId(entryId)}
+        onClose={() => setScoringEntryId(null)}
+        onUpdateEntry={handleUpdateEntryScoring}
+        onAdjustRebuys={handleAdjustRebuys}
+        onAdjustAddons={handleAdjustAddons}
+        onRequestEliminate={(entry) => setSelectedEntryToEliminate(entry)}
+      />
 
-            <select
-              value={koWinnerPlayerId}
-              onChange={(e) => setKoWinnerPlayerId(e.target.value)}
-              className="w-full bg-slate-900 text-white text-sm p-3 rounded-xl border border-slate-800"
-            >
-              <option value="">No KO Bounty Awarded</option>
-              {gameEntries
-                .filter((ge) => !ge.isEliminated && ge.$id !== selectedEntryToEliminate.$id)
-                .map((ge) => (
-                  <option key={ge.playerId} value={ge.playerId}>
-                    KO by: {ge.playerName}
-                  </option>
-                ))}
-            </select>
+      {/* 3. Accessible Elimination & Knockout Audit Dialog */}
+      <EliminationDialog
+        entry={selectedEntryToEliminate}
+        eligibleEliminators={gameEntries.filter(
+          (ge) =>
+            getEntryStatus(ge) === 'ACTIVE' &&
+            ge.$id !== selectedEntryToEliminate?.$id
+        )}
+        finishPositionPreview={activeEntries.length}
+        onClose={() => setSelectedEntryToEliminate(null)}
+        onConfirm={handleConfirmElimination}
+      />
 
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                onClick={() => setSelectedEntryToEliminate(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmElimination}
-                className="px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 text-white text-xs font-bold"
-              >
-                Confirm Bust Out
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 3. Official Finalization & Scoring Preview Dialog */}
+      <FinalizeTournamentDialog
+        isOpen={isFinalizeDialogOpen}
+        game={activeGame}
+        entries={gameEntries}
+        onClose={() => setIsFinalizeDialogOpen(false)}
+        onConfirmFinalize={handleConfirmFinalization}
+      />
 
     </div>
   );

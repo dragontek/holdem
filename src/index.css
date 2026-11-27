@@ -98,3 +98,23 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(245, 158, 11, 0.8);
 }
+
+/* Print Rules for Physical Paper Scorecard Comparison Mode */
+@media print {
+  body {
+    background: #ffffff !important;
+    background-image: none !important;
+    color: #020617 !important;
+  }
+
+  header,
+  nav,
+  .no-print {
+    display: none !important;
+  }
+
+  .paper-scorecard-page {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

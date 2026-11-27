@@ -24,6 +24,7 @@ import {
   Check,
   Menu,
   UserCog,
+  Download,
 } from 'lucide-react';
 
 export type ViewMode =
@@ -48,6 +49,8 @@ export interface NavigationProps {
   leagues: League[];
   activeLeagueId: string;
   onSelectLeague: (leagueId: string) => void;
+  canInstallPwa?: boolean;
+  onInstallPwa?: () => void;
 }
 
 function getRoleIcon(role: UserRole) {
@@ -78,6 +81,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   leagues,
   activeLeagueId,
   onSelectLeague,
+  canInstallPwa = false,
+  onInstallPwa,
 }) => {
   const userRole = currentUser?.role || 'player';
   const canAccessAdmin = AuthService.canAccessAdmin(userRole);
@@ -135,8 +140,8 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   return (
     <>
-      {/* Clean Top Header Bar */}
-      <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
+      {/* Clean Top Header Bar (respects iOS/Android standalone status-bar safe area) */}
+      <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 pt-[env(safe-area-inset-top)]">
         <div className="max-w-7xl mx-auto h-14 px-3 sm:px-4 flex items-center justify-between gap-2">
           {/* Left: Brand & Active League Subtitle */}
           <div className="flex items-center gap-2.5 min-w-0">
@@ -333,6 +338,16 @@ export const Navigation: React.FC<NavigationProps> = ({
                     <Tv className="w-4 h-4 text-indigo-400" />
                     <span>Venue TV Broadcast Mode</span>
                   </DropdownMenu.Item>
+
+                  {canInstallPwa && onInstallPwa && (
+                    <DropdownMenu.Item
+                      onSelect={onInstallPwa}
+                      className="flex items-center gap-2.5 px-2.5 py-2.5 rounded-xl text-xs font-semibold text-amber-300 hover:bg-slate-800 focus:bg-slate-800 focus:outline-none cursor-pointer"
+                    >
+                      <Download className="w-4 h-4 text-amber-400" />
+                      <span>Install App</span>
+                    </DropdownMenu.Item>
+                  )}
 
                   <DropdownMenu.Item
                     onSelect={onOpenAppwriteSetup}

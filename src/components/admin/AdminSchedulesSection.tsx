@@ -59,13 +59,13 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
         </div>
 
 
-        {/* Filters & Action */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        {/* Filters & Action (Mobile-First Grid -> Desktop Inline) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-wrap items-center gap-2.5 w-full md:w-auto">
           {/* Season Selector */}
           <select
             value={selectedScheduleSeason}
             onChange={(e) => setSelectedScheduleSeason(e.target.value)}
-            className="bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
+            className="min-h-[44px] sm:min-h-[38px] w-full lg:w-auto bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
           >
             <option value="all">All Seasons ({games.length})</option>
             {seasons.map((s) => {
@@ -82,7 +82,7 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
           <select
             value={selectedScheduleVenue}
             onChange={(e) => setSelectedScheduleVenue(e.target.value)}
-            className="bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
+            className="min-h-[44px] sm:min-h-[38px] w-full lg:w-auto bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
           >
             <option value="all">All Venues</option>
             {venues.map((v) => (
@@ -96,7 +96,7 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
           <select
             value={selectedRecurrenceFilter}
             onChange={(e) => setSelectedRecurrenceFilter(e.target.value as 'all' | 'recurring' | 'single')}
-            className="bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
+            className="min-h-[44px] sm:min-h-[38px] w-full lg:w-auto bg-slate-900 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-500"
           >
             <option value="all">All Event Types ({games.length})</option>
             <option value="recurring">
@@ -111,7 +111,7 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
             variant="default"
             size="sm"
             onClick={() => onOpenScheduleModal(null)}
-            className="shrink-0"
+            className="min-h-[44px] sm:min-h-[38px] w-full lg:w-auto shrink-0"
           >
             <Plus className="w-4 h-4" /> Schedule Tournament
           </Button>

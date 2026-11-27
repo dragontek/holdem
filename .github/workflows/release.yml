@@ -1,0 +1,74 @@
+name: Release — Semantic Versioning & GitHub Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Publish Semantic Release (v1.x.x)
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    steps:
+      - name: Checkout main (full history for semver calculation)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Verify Lint, Build & Site Tarball
+        run: |
+          npm run lint
+          npm run bundle:site
+
+      - name: Install semantic-release toolchain
+        run: |
+          npm install --no-save --no-package-lock \
+            semantic-release@24 \
+            @semantic-release/commit-analyzer@13 \
+            @semantic-release/release-notes-generator@14 \
+            @semantic-release/changelog@6 \
+            @semantic-release/npm@12 \
+            @semantic-release/git@10 \
+            @semantic-release/github@11 \
+            conventional-changelog-conventionalcommits@8
+
+      - name: Run Semantic Release (Tag v1.x.x + Changelog + GitHub Release)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
+
+      - name: Sync Release Metadata Back to develop
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch origin main develop
+          if git show-ref --verify --quiet refs/remotes/origin/develop; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git checkout -B develop origin/develop
+            if git merge --no-edit -X theirs origin/main; then
+              git push origin develop || echo "Notice: Could not auto-sync develop (branch protection may require manual PR)."
+            else
+              echo "Notice: Skipping automatic back-merge to develop due to merge conflict."
+              git merge --abort || true
+            fi
+          fi

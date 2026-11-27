@@ -1,0 +1,90 @@
+name: CI — Lint, Build & Conventional Commits
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conventional-commits:
+    name: Validate Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate Pull Request Title
+        if: github.event_name == 'pull_request'
+        run: node scripts/validateCommitMsg.mjs --message "${{ github.event.pull_request.title }}"
+
+      - name: Validate Commit Messages (PR)
+        if: github.event_name == 'pull_request'
+        run: node scripts/validateCommitMsg.mjs --range "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+      - name: Validate Commit Messages (Push)
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            node scripts/validateCommitMsg.mjs --range "${AFTER_SHA}~1..${AFTER_SHA}"
+          else
+            node scripts/validateCommitMsg.mjs --range "${BEFORE_SHA}..${AFTER_SHA}"
+          fi
+
+  build-and-lint:
+    name: Lint, Typecheck, Build & PWA Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Linter (oxlint)
+        run: npm run lint
+
+      - name: Validate Service Worker & PWA Manifest
+        run: |
+          node --check public/sw.js
+          node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('public/manifest.webmanifest','utf8')); for (const ic of m.icons) { if (!fs.existsSync('public'+ic.src)) throw new Error('Missing PWA icon: public'+ic.src); } console.log('PWA manifest valid:', m.name);"
+
+      - name: Typecheck, Build & Bundle Site Tarball
+        run: npm run bundle:site
+
+      - name: Verify PWA Assets in dist/
+        run: |
+          test -f dist/index.html
+          test -f dist/manifest.webmanifest
+          test -f dist/sw.js
+          test -f dist/icons/icon-192.png
+          test -f dist/icons/icon-512.png
+          test -f dist/icons/icon-maskable-512.png
+          test -f dist/icons/apple-touch-icon.png
+
+      - name: Upload Site Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: holdem-site-${{ github.sha }}
+          path: holdem-site.tar.gz
+          retention-days: 14

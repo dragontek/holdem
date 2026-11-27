@@ -60,7 +60,7 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-between p-6 select-none relative overflow-hidden">
+    <div className="min-h-[100dvh] bg-slate-950 text-white flex flex-col justify-between p-4 sm:p-6 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] select-none relative overflow-hidden">
       {/* Big-Screen Live Point & Knockout Broadcast Banner */}
       <TVBroadcastBanner alert={tvBannerAlert} />
       
@@ -151,7 +151,7 @@ export const VenueTVDisplay: React.FC<VenueTVDisplayProps> = ({
           </span>
 
           {/* Huge Timer */}
-          <div className="text-7xl xl:text-[120px] font-mono font-black tracking-tight text-white drop-shadow-2xl leading-none">
+          <div className="text-6xl sm:text-7xl xl:text-[120px] font-mono font-black tracking-tight text-white drop-shadow-2xl leading-none">
             {formatClockTime(secondsLeft)}
           </div>
 

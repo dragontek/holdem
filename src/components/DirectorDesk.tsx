@@ -856,13 +856,14 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
               </div>
             </div>
 
-            {/* Timer Controls & Manual Blind Time Override */}
-            <div className="flex flex-wrap items-center justify-center gap-3">
+            {/* Timer Controls & Manual Blind Time Override (Mobile-First Stack -> Desktop Inline Console) */}
+            <div className="flex flex-col md:flex-row md:flex-wrap items-stretch md:items-center justify-center gap-2.5 sm:gap-3">
               {canManageClock ? (
                 <>
                   <button
+                    type="button"
                     onClick={handleToggleTimer}
-                    className={`px-6 py-3 rounded-xl font-black text-sm flex items-center gap-2 transition-all shadow-lg ${
+                    className={`min-h-[48px] w-full md:w-auto px-6 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
                       isRunning
                         ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
                         : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
@@ -872,41 +873,50 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                     <span>{isRunning ? 'PAUSE CLOCK' : 'START CLOCK'}</span>
                   </button>
 
-                  <button
-                    onClick={() => handleAdjustSeconds(-60)}
-                    className="px-3.5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
-                  >
-                    <Minus className="w-4 h-4" /> -1 Min
-                  </button>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleAdjustSeconds(-60)}
+                      className="min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-700 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    >
+                      <Minus className="w-4 h-4" /> -1 Min
+                    </button>
 
-                  <button
-                    onClick={() => handleAdjustSeconds(60)}
-                    className="px-3.5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
-                  >
-                    <Plus className="w-4 h-4" /> +1 Min
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAdjustSeconds(60)}
+                      className="min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-700 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    >
+                      <Plus className="w-4 h-4" /> +1 Min
+                    </button>
 
-                  <button
-                    onClick={handleSkipLevel}
-                    className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
-                  >
-                    <SkipForward className="w-4 h-4" /> Skip Level
-                  </button>
+                    <button
+                      type="button"
+                      onClick={handleSkipLevel}
+                      className="min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-700 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    >
+                      <SkipForward className="w-4 h-4" /> Skip Level
+                    </button>
 
-                  <button
-                    onClick={handleResetLevel}
-                    className="px-3.5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
-                    title="Reset Level Timer"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                  </button>
+                    <button
+                      type="button"
+                      onClick={handleResetLevel}
+                      className="min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-700 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                      title="Reset Level Timer"
+                      aria-label="Reset Level Timer"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      <span className="md:hidden">Reset</span>
+                    </button>
+                  </div>
 
                   <form
                     onSubmit={handleManualTimeOverride}
-                    className="flex items-center gap-1.5 pl-2 border-l border-slate-800"
+                    className="flex items-center gap-2 pt-2 md:pt-0 border-t md:border-t-0 md:border-l border-slate-800 md:pl-3"
                   >
                     <input
                       type="number"
+                      inputMode="numeric"
                       min="1"
                       max="120"
                       step="1"
@@ -914,15 +924,15 @@ export const DirectorDesk: React.FC<DirectorDeskProps> = ({
                       onChange={(e) => setOverrideMinutesInput(e.target.value)}
                       placeholder={`${currentLevel.durationMinutes}m`}
                       aria-label="Override blind duration in minutes"
-                      className="w-16 h-10 rounded-xl bg-slate-950 border border-slate-700 px-2.5 text-xs font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      className="flex-1 md:flex-none md:w-20 h-11 rounded-xl bg-slate-950 border border-slate-700 px-3 text-sm md:text-xs font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                     />
-                    <Button type="submit" size="sm" variant="outline" className="h-10 text-xs">
+                    <Button type="submit" size="sm" variant="outline" className="h-11 px-4 text-xs shrink-0">
                       Set Mins
                     </Button>
                   </form>
                 </>
               ) : (
-                <div className="text-xs text-slate-400 font-semibold px-4 py-2 bg-slate-900 rounded-xl border border-slate-800">
+                <div className="text-xs text-slate-400 font-semibold px-4 py-2.5 bg-slate-900 rounded-xl border border-slate-800 text-center">
                   Clock controls restricted to Dealer &amp; Manager
                 </div>
               )}

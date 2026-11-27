@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { Venue } from '@/types/holdem';
 import { AppwriteService } from '@/services/appwriteService';
+import { VenueImageUploader } from '@/components/VenueImageUploader';
 import { 
   Building2, 
   Plus, 
@@ -30,6 +31,7 @@ interface VenueManagerModalProps {
   onClose: () => void;
   venues: Venue[];
   onVenuesChange: (venues: Venue[]) => void;
+  initialVenueToEdit?: Venue | null;
 }
 
 export const VenueManagerModal: React.FC<VenueManagerModalProps> = ({
@@ -37,15 +39,18 @@ export const VenueManagerModal: React.FC<VenueManagerModalProps> = ({
   onClose,
   venues,
   onVenuesChange,
+  initialVenueToEdit = null,
 }) => {
-  const [editingVenueId, setEditingVenueId] = useState<string | null>(null);
+  const [editingVenueId, setEditingVenueId] = useState<string | null>(
+    initialVenueToEdit?.$id ?? null
+  );
   const [isAddingNew, setIsAddingNew] = useState<boolean>(false);
   const [formData, setFormData] = useState({
-    name: '',
-    address: '',
-    phone: '',
-    website: '',
-    imageUrl: '',
+    name: initialVenueToEdit?.name || '',
+    address: initialVenueToEdit?.address || '',
+    phone: initialVenueToEdit?.phone || '',
+    website: initialVenueToEdit?.website || '',
+    imageUrl: initialVenueToEdit?.imageUrl || '',
   });
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -263,7 +268,7 @@ export const VenueManagerModal: React.FC<VenueManagerModalProps> = ({
                     />
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="sm:col-span-2 space-y-1.5">
                     <Label htmlFor="venueWebsite">Website URL</Label>
                     <Input
                       id="venueWebsite"
@@ -274,16 +279,11 @@ export const VenueManagerModal: React.FC<VenueManagerModalProps> = ({
                     />
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="venueImageUrl">Photo Image URL</Label>
-                    <Input
-                      id="venueImageUrl"
-                      type="text"
-                      placeholder="https://..."
-                      value={formData.imageUrl}
-                      onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
-                    />
-                  </div>
+                  <VenueImageUploader
+                    imageUrl={formData.imageUrl}
+                    onChange={(nextUrl) => setFormData((prev) => ({ ...prev, imageUrl: nextUrl }))}
+                    disabled={isSaving}
+                  />
                 </div>
 
                 <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">

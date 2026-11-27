@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 export interface AdminVenuesSectionProps {
   venues: Venue[];
   games: Game[];
-  onOpenVenueModal: () => void;
+  onOpenVenueModal: (venueToEdit?: Venue) => void;
 }
 
 export const AdminVenuesSection: React.FC<AdminVenuesSectionProps> = ({
@@ -30,7 +30,7 @@ export const AdminVenuesSection: React.FC<AdminVenuesSectionProps> = ({
         <Button
           variant="default"
           size="sm"
-          onClick={onOpenVenueModal}
+          onClick={() => onOpenVenueModal()}
           className="self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" /> Add Host Venue
@@ -77,7 +77,7 @@ export const AdminVenuesSection: React.FC<AdminVenuesSectionProps> = ({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={onOpenVenueModal}
+                onClick={() => onOpenVenueModal(venue)}
                 className="h-8 text-xs"
               >
                 <Edit3 className="w-3 h-3 text-amber-400" /> Edit

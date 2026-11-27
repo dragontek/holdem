@@ -1,10 +1,12 @@
-import { Client, Databases, TablesDB, Account, Storage, Realtime, ID, OAuthProvider } from 'appwrite';
+import { Client, Databases, TablesDB, Account, Storage, Realtime, ID, OAuthProvider, Query } from 'appwrite';
 
-export { ID, OAuthProvider };
+export { ID, OAuthProvider, Query };
 
 const endpoint = import.meta.env.VITE_APPWRITE_ENDPOINT || '';
 const projectId = import.meta.env.VITE_APPWRITE_PROJECT_ID || '';
 export const DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID || 'holdem_db';
+export const VENUE_IMAGES_BUCKET_ID =
+  import.meta.env.VITE_APPWRITE_VENUE_BUCKET_ID || 'venue_images';
 
 export const isAppwriteConfigured = Boolean(endpoint && projectId);
 

@@ -65,6 +65,14 @@ import {
   parseEntryScoringMetaPayload,
   type EntryScoringMeta,
 } from '../lib/entryScoringMeta';
+import {
+  PLAYER_ROLE_META_ANNOUNCEMENT_TYPE,
+  buildPlayerRoleMeta,
+  getPlayerRoleMetaRowId,
+  mergeRawPlayerWithRoleMeta,
+  parsePlayerRoleMetaPayload,
+  type PlayerRoleMeta,
+} from '../lib/playerProfileMeta';
 import { AppwriteRealtime } from './appwriteRealtime';
 import {
   assertPermission,
@@ -75,7 +83,11 @@ import {
 } from '../lib/permissions';
 
 export const LIVE_SCORE_EVENT_ANNOUNCEMENT_TYPE = 'live_score_event';
-export { GAME_CLOCK_ANNOUNCEMENT_TYPE, ENTRY_SCORING_META_ANNOUNCEMENT_TYPE };
+export {
+  GAME_CLOCK_ANNOUNCEMENT_TYPE,
+  ENTRY_SCORING_META_ANNOUNCEMENT_TYPE,
+  PLAYER_ROLE_META_ANNOUNCEMENT_TYPE,
+};
 
 const SESSION_CACHE_SCOPE = `${APPWRITE_ENDPOINT || 'offline'}__${DATABASE_ID}`;
 const LOCAL_STORAGE_LEAGUES_KEY = 'holdem_leagues';
@@ -819,6 +831,52 @@ export class AppwriteService {
     };
   }
 
+  private static hasNativePlayerRoleColumns(tableId: string): boolean {
+    const cols = knownTableColumns.get(tableId);
+    if (!cols) return false;
+    return cols.has('role') && cols.has('email') && cols.has('hasDgCarryover');
+  }
+
+  /**
+   * Persists player role & extended profile metadata (`prm_<playerId>` in `announcements`)
+   * whenever the resolved players table lacks native `role` / `email` / `hasDgCarryover` columns.
+   */
+  private static async savePlayerRoleMetaSidecar(
+    playerId: string,
+    data: {
+      role: Player['role'];
+      email?: string;
+      highHandBadges?: number;
+      hasDgCarryover?: boolean;
+    },
+    playersTable?: string | null
+  ): Promise<boolean> {
+    if (
+      !isAppwriteConfigured ||
+      getMissingTables().has(APPWRITE_TABLES.ANNOUNCEMENTS) ||
+      (playersTable && this.hasNativePlayerRoleColumns(playersTable))
+    ) {
+      return false;
+    }
+    const rowId = getPlayerRoleMetaRowId(playerId);
+    const meta = buildPlayerRoleMeta(playerId, data);
+    const serialized = JSON.stringify(meta);
+    if (serialized.length > 1950) return false;
+
+    const payload: Record<string, unknown> = {
+      title: playerId.slice(0, 250),
+      content: serialized,
+      type: PLAYER_ROLE_META_ANNOUNCEMENT_TYPE,
+      isActive: false,
+      createdAt: meta.updatedAt,
+    };
+
+    const updated = await resilientUpdateRow(APPWRITE_TABLES.ANNOUNCEMENTS, rowId, payload);
+    if (updated) return true;
+    const createdId = await resilientCreateRow(APPWRITE_TABLES.ANNOUNCEMENTS, rowId, payload);
+    return Boolean(createdId);
+  }
+
   // Fetch Players & Standings (strictly Appwrite rows when Appwrite is configured)
   static async getPlayers(): Promise<Player[]> {
     if (!isAppwriteConfigured) {
@@ -853,14 +911,32 @@ export class AppwriteService {
 
     if (cachedTable === null) return [];
 
+    const rawAnnouncementsPromise = resilientListRows(APPWRITE_TABLES.ANNOUNCEMENTS);
     const candidates = cachedTable ? [cachedTable] : ['users', 'players'];
     for (const tableId of candidates) {
       const items = await resilientListRows(tableId);
       if (items !== null) {
         setResolvedPlayersTable(tableId);
-        const rows = (items as (Partial<Player> & { $id: string })[]).filter((raw) =>
-          Boolean(raw && raw.$id)
-        );
+        const rawAnnouncements = await rawAnnouncementsPromise;
+        const roleMetaByPlayerId = new Map<string, PlayerRoleMeta>();
+        if (Array.isArray(rawAnnouncements)) {
+          for (const ann of rawAnnouncements) {
+            const parsed = parsePlayerRoleMetaPayload(ann as Record<string, unknown>);
+            if (!parsed) continue;
+            const existing = roleMetaByPlayerId.get(parsed.playerId);
+            if (
+              !existing ||
+              new Date(parsed.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()
+            ) {
+              roleMetaByPlayerId.set(parsed.playerId, parsed);
+            }
+          }
+        }
+
+        const rows = (items as (Partial<Player> & { $id: string })[])
+          .filter((raw) => Boolean(raw && raw.$id))
+          .map((raw) => mergeRawPlayerWithRoleMeta(raw, roleMetaByPlayerId.get(raw.$id)));
+
         for (const raw of rows) {
           if (
             raw.role !== 'admin' &&
@@ -894,6 +970,8 @@ export class AppwriteService {
     careerWins?: number;
     careerKOs?: number;
     gamesPlayed?: number;
+    highHandBadges?: number;
+    hasDgCarryover?: boolean;
     leagueId?: string;
   }): Promise<Player> {
     const actor = getActiveActor();
@@ -933,8 +1011,8 @@ export class AppwriteService {
       careerWins: profile.careerWins ?? 0,
       careerKOs: profile.careerKOs ?? 0,
       gamesPlayed: profile.gamesPlayed ?? 0,
-      highHandBadges: 0,
-      hasDgCarryover: false,
+      highHandBadges: profile.highHandBadges ?? 0,
+      hasDgCarryover: Boolean(profile.hasDgCarryover),
     };
 
     if (!isAppwriteConfigured) {
@@ -962,7 +1040,7 @@ export class AppwriteService {
         careerKOs: playerRecord.careerKOs,
         gamesPlayed: playerRecord.gamesPlayed,
         highHandBadges: playerRecord.highHandBadges || 0,
-        hasDgCarryover: false,
+        hasDgCarryover: Boolean(playerRecord.hasDgCarryover),
         ...(resolvedLeagueId ? { league: resolvedLeagueId } : {}),
       };
       const updated = await resilientUpdateRow(playersTable, playerRecord.$id, payload);
@@ -970,6 +1048,18 @@ export class AppwriteService {
         await resilientCreateRow(playersTable, playerRecord.$id, payload);
       }
     }
+
+    // Persist role/email/badges/DG carryover durably when the live players table lacks those columns
+    await this.savePlayerRoleMetaSidecar(
+      playerRecord.$id,
+      {
+        role: playerRecord.role,
+        email: playerRecord.email,
+        highHandBadges: playerRecord.highHandBadges,
+        hasDgCarryover: playerRecord.hasDgCarryover,
+      },
+      playersTable
+    );
 
     return playerRecord;
   }
@@ -985,6 +1075,9 @@ export class AppwriteService {
     if (!playersTable || getMissingTables().has(playersTable)) return false;
     try {
       await tablesDb.deleteRow(DATABASE_ID, playersTable, playerId);
+      void tablesDb
+        .deleteRow(DATABASE_ID, APPWRITE_TABLES.ANNOUNCEMENTS, getPlayerRoleMetaRowId(playerId))
+        .catch(() => {});
       return true;
     } catch {
       return false;
@@ -1444,7 +1537,8 @@ export class AppwriteService {
           (doc: any) =>
             doc.type !== LIVE_SCORE_EVENT_ANNOUNCEMENT_TYPE &&
             doc.type !== GAME_CLOCK_ANNOUNCEMENT_TYPE &&
-            doc.type !== ENTRY_SCORING_META_ANNOUNCEMENT_TYPE
+            doc.type !== ENTRY_SCORING_META_ANNOUNCEMENT_TYPE &&
+            doc.type !== PLAYER_ROLE_META_ANNOUNCEMENT_TYPE
         )
         .map((doc: any) => ({
           $id: doc.$id,

@@ -122,7 +122,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     return () => {
       active = false;
     };
-  }, [players]);
+  }, []);
 
   if (!canAccessAdmin) {
     return (
@@ -224,13 +224,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
       }
     }
 
-    const updated = await AuthService.updateUserRole(userId, newRole, currentUser);
-    setUsers(updated);
-    if (onPlayersChange) onPlayersChange(updated);
-    if (currentUser && currentUser.$id === userId) {
-      onRoleChange(newRole);
+    try {
+      const updated = await AuthService.updateUserRole(userId, newRole, currentUser);
+      setUsers(updated);
+      if (onPlayersChange) onPlayersChange(updated);
+      if (currentUser && currentUser.$id === userId) {
+        onRoleChange(newRole);
+      }
+      showToast(`Updated ${targetUser.name}'s role to ${newRole.toUpperCase()}`);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to update user role. Please try again.';
+      alert(message);
     }
-    showToast(`Updated ${targetUser.name}'s role to ${newRole.toUpperCase()}`);
   };
 
   const handleDeleteUser = async (userId: string, userName: string) => {

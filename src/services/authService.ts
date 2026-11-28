@@ -791,10 +791,14 @@ export class AuthService {
 
     const targetUser = updated.find((u) => u.$id === userId);
     if (targetUser) {
-      try {
+      if (isAppwriteConfigured) {
         await AppwriteService.upsertPlayerProfile(targetUser);
-      } catch {
-        // Offline fallback already saved locally
+      } else {
+        try {
+          await AppwriteService.upsertPlayerProfile(targetUser);
+        } catch {
+          // Offline fallback already saved locally
+        }
       }
     }
 

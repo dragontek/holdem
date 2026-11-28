@@ -57,8 +57,8 @@ function normalizeViewName(segment: string): AppViewMode {
 export function getAppBasePath(): string {
   const raw =
     typeof import.meta !== 'undefined' &&
-    import.meta.env &&
-    typeof import.meta.env.BASE_URL === 'string'
+      import.meta.env &&
+      typeof import.meta.env.BASE_URL === 'string'
       ? import.meta.env.BASE_URL
       : '/';
   const trimmed = raw.trim().replace(/\/+$/, '');
@@ -327,8 +327,8 @@ export function reconcileEntityRelationships(data: {
       g.seasonId && validSeasonIds.has(g.seasonId)
         ? g.seasonId
         : parentEvent?.seasonId && validSeasonIds.has(parentEvent.seasonId)
-        ? parentEvent.seasonId
-        : defaultSeasonId;
+          ? parentEvent.seasonId
+          : defaultSeasonId;
 
     const matchedVenueByName = g.venueName
       ? venueByName.get(g.venueName.trim().toLowerCase())
@@ -337,8 +337,8 @@ export function reconcileEntityRelationships(data: {
       g.venueId && validVenueIds.has(g.venueId)
         ? g.venueId
         : parentEvent?.venueId && validVenueIds.has(parentEvent.venueId)
-        ? parentEvent.venueId
-        : matchedVenueByName?.$id || (!g.venueId && !g.venueName ? venues[0]?.$id || '' : g.venueId);
+          ? parentEvent.venueId
+          : matchedVenueByName?.$id || (!g.venueId && !g.venueName ? venues[0]?.$id || '' : g.venueId);
 
     const matchedVenue = venues.find((v) => v.$id === resolvedVenueId);
 

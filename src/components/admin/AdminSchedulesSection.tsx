@@ -1,13 +1,13 @@
 import type { Game, Venue, Season, TournamentEvent } from '@/types/holdem';
-import { 
-  Calendar, 
-  Plus, 
-  PlayCircle, 
-  Clock, 
-  Edit3, 
-  Trash2, 
+import {
+  Calendar,
+  Plus,
+  PlayCircle,
+  Clock,
+  Edit3,
+  Trash2,
   RotateCcw,
-  Layers 
+  Layers
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -145,9 +145,8 @@ export const AdminSchedulesSection: React.FC<AdminSchedulesSectionProps> = ({
             return (
               <Card
                 key={game.$id}
-                className={`p-5 flex flex-col justify-between space-y-4 transition-all relative overflow-hidden ${
-                  isLive ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
-                }`}
+                className={`p-5 flex flex-col justify-between space-y-4 transition-all relative overflow-hidden ${isLive ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
+                  }`}
               >
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
